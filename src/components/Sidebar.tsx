@@ -28,6 +28,7 @@ const navigation = [
   { name: 'Invoices', href: '/invoices', icon: '🧾' },
   { name: 'Finance', href: '/finance', icon: '💰' },
   { name: 'Reports', href: '/reports', icon: '📈' },
+  { name: 'API Docs', href: '/api-docs', icon: '📖' },
 ];
 
 export default function Sidebar() {

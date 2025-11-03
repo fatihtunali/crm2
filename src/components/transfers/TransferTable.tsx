@@ -1,3 +1,5 @@
+import { useState, Fragment } from 'react';
+
 interface Transfer {
   id: number;
   organization_id: number;
@@ -18,8 +20,6 @@ interface Transfer {
   created_by: number | null;
   vehicle_type: string | null;
   capacity: number | null;
-  brand: string | null;
-  model: string | null;
 }
 
 interface TransferTableProps {
@@ -37,6 +37,19 @@ export default function TransferTable({
   onEdit,
   onDelete
 }: TransferTableProps) {
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+
+  const toggleExpand = (id: number) => {
+    setExpandedRows(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  };
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'active': return 'bg-green-100 text-green-700';
@@ -46,17 +59,21 @@ export default function TransferTable({
     }
   };
 
+  const formatPrice = (price: number | null, currency: string = 'EUR') => {
+    if (price === null || price === undefined) return '-';
+    const numPrice = typeof price === 'string' ? parseFloat(price) : price;
+    if (isNaN(numPrice)) return '-';
+    return `${currency} ${numPrice.toFixed(2)}`;
+  };
+
   const getVehicleInfo = (transfer: Transfer) => {
     if (!transfer.vehicle_type) return 'N/A';
 
     const parts = [transfer.vehicle_type];
-    if (transfer.brand && transfer.model) {
-      parts.push(`${transfer.brand} ${transfer.model}`);
-    }
     if (transfer.capacity) {
       parts.push(`(${transfer.capacity} pax)`);
     }
-    return parts.join(' - ');
+    return parts.join(' ');
   };
 
   if (loading) {
@@ -81,20 +98,32 @@ export default function TransferTable({
         <table className="w-full">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"></th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Provider / Company</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Route</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Vehicle</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Season</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Duration</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">One-Way Price</th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Round-Trip Price</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
               <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {transfers.map((transfer) => (
-              <tr key={transfer.id} className="hover:bg-gray-50">
+            {transfers.map((transfer) => {
+              const isExpanded = expandedRows.has(transfer.id);
+
+              return (
+                <Fragment key={transfer.id}>
+                  {/* Main Row */}
+                  <tr className="hover:bg-gray-50">
+                    <td className="px-4 py-4">
+                      <button
+                        onClick={() => toggleExpand(transfer.id)}
+                        className="text-gray-400 hover:text-gray-600 transition-transform"
+                        style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                      >
+                        ▶
+                      </button>
+                    </td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   <div className="text-sm font-medium text-gray-900">{transfer.provider_name || 'Not assigned'}</div>
                   {transfer.provider_id && <div className="text-xs font-mono text-gray-500">Provider #{transfer.provider_id}</div>}
@@ -111,24 +140,6 @@ export default function TransferTable({
                   <div className="text-sm text-gray-900">{transfer.season_name}</div>
                   <div className="text-xs text-gray-500">
                     {new Date(transfer.start_date).toLocaleDateString('en-GB')} - {new Date(transfer.end_date).toLocaleDateString('en-GB')}
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">
-                    {transfer.estimated_duration_hours
-                      ? `${parseFloat(transfer.estimated_duration_hours.toString()).toFixed(1)} hrs`
-                      : 'N/A'
-                    }
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm font-semibold text-gray-900">
-                    EUR {parseFloat(transfer.price_oneway.toString()).toFixed(2)}
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm font-semibold text-gray-900">
-                    EUR {parseFloat(transfer.price_roundtrip.toString()).toFixed(2)}
                   </div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
@@ -159,7 +170,95 @@ export default function TransferTable({
                   </div>
                 </td>
               </tr>
-            ))}
+
+              {/* Expandable Pricing Row */}
+              {isExpanded && (
+                <tr className="bg-gray-50">
+                  <td colSpan={7} className="px-4 py-4">
+                    <div className="ml-12 mr-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-semibold text-gray-700">
+                          Transfer Details - {transfer.season_name}
+                        </h4>
+                        <span className="text-xs text-gray-500">
+                          Valid: {new Date(transfer.start_date).toLocaleDateString()} - {new Date(transfer.end_date).toLocaleDateString()}
+                        </span>
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        {/* Pricing Table */}
+                        <div className="bg-white rounded-lg border border-blue-200 overflow-hidden">
+                          <div className="bg-blue-50 px-4 py-2 border-b border-blue-200">
+                            <h5 className="text-sm font-semibold text-blue-900">Transfer Pricing</h5>
+                            <p className="text-xs text-blue-600">{transfer.from_city} → {transfer.to_city}</p>
+                          </div>
+                          <table className="w-full text-sm">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Trip Type</th>
+                                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Price</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200">
+                              <tr className="hover:bg-gray-50">
+                                <td className="px-4 py-2 text-gray-700">
+                                  <div className="font-medium">One-Way</div>
+                                  <div className="text-xs text-gray-500">Single trip</div>
+                                </td>
+                                <td className="px-4 py-2 text-right font-semibold text-blue-700">{formatPrice(transfer.price_oneway)}</td>
+                              </tr>
+                              <tr className="hover:bg-gray-50">
+                                <td className="px-4 py-2 text-gray-700">
+                                  <div className="font-medium">Round-Trip</div>
+                                  <div className="text-xs text-gray-500">Return journey included</div>
+                                </td>
+                                <td className="px-4 py-2 text-right font-semibold text-blue-700">{formatPrice(transfer.price_roundtrip)}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {/* Vehicle & Trip Details */}
+                        <div className="bg-white rounded-lg border border-green-200 overflow-hidden">
+                          <div className="bg-green-50 px-4 py-2 border-b border-green-200">
+                            <h5 className="text-sm font-semibold text-green-900">Vehicle & Trip Information</h5>
+                            <p className="text-xs text-green-600">Additional details</p>
+                          </div>
+                          <div className="p-4 space-y-3">
+                            <div>
+                              <div className="text-xs text-gray-500 uppercase">Vehicle Type</div>
+                              <div className="text-sm font-medium text-gray-900">{transfer.vehicle_type || 'N/A'}</div>
+                            </div>
+                            {transfer.capacity && (
+                              <div>
+                                <div className="text-xs text-gray-500 uppercase">Passenger Capacity</div>
+                                <div className="text-sm font-medium text-gray-900">{transfer.capacity} passengers</div>
+                              </div>
+                            )}
+                            {transfer.estimated_duration_hours && (
+                              <div>
+                                <div className="text-xs text-gray-500 uppercase">Estimated Duration</div>
+                                <div className="text-sm font-medium text-gray-900">
+                                  {parseFloat(transfer.estimated_duration_hours.toString()).toFixed(1)} hours
+                                </div>
+                              </div>
+                            )}
+                            {transfer.notes && (
+                              <div>
+                                <div className="text-xs text-gray-500 uppercase">Notes</div>
+                                <div className="text-sm text-gray-900">{transfer.notes}</div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              )}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>

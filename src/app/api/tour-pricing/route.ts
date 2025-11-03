@@ -1,22 +1,168 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { parsePaginationParams, parseSortParams, buildPagedResponse } from '@/lib/pagination';
+import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
+import { toMinorUnits, fromMinorUnits } from '@/lib/money';
+import type { Money, PagedResponse } from '@/types/api';
 
-// GET - Fetch pricing for a specific tour
-export async function GET(request: Request) {
+interface TourPricingRecord {
+  id: number;
+  tour_id: number;
+  season_name: string;
+  start_date: string;
+  end_date: string;
+  currency: string;
+  sic_price_2_pax: number;
+  sic_price_4_pax: number;
+  sic_price_6_pax: number;
+  sic_price_8_pax: number;
+  sic_price_10_pax: number;
+  pvt_price_2_pax: number;
+  pvt_price_4_pax: number;
+  pvt_price_6_pax: number;
+  pvt_price_8_pax: number;
+  pvt_price_10_pax: number;
+  notes: string | null;
+  status: string;
+  effective_from: string;
+  created_by: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface TourPricingResponse {
+  id: number;
+  tour_id: number;
+  season_name: string;
+  start_date: string;
+  end_date: string;
+  sic_price_2_pax: Money;
+  sic_price_4_pax: Money;
+  sic_price_6_pax: Money;
+  sic_price_8_pax: Money;
+  sic_price_10_pax: Money;
+  pvt_price_2_pax: Money;
+  pvt_price_4_pax: Money;
+  pvt_price_6_pax: Money;
+  pvt_price_8_pax: Money;
+  pvt_price_10_pax: Money;
+  notes: string | null;
+  status: string;
+  effective_from: string;
+  created_by: number;
+  created_at: string;
+  updated_at: string;
+}
+
+interface TourPricingInput {
+  tour_id: number;
+  season_name: string;
+  start_date: string;
+  end_date: string;
+  currency: string;
+  sic_price_2_pax: Money;
+  sic_price_4_pax: Money;
+  sic_price_6_pax: Money;
+  sic_price_8_pax: Money;
+  sic_price_10_pax: Money;
+  pvt_price_2_pax: Money;
+  pvt_price_4_pax: Money;
+  pvt_price_6_pax: Money;
+  pvt_price_8_pax: Money;
+  pvt_price_10_pax: Money;
+  notes?: string;
+}
+
+function convertToResponse(record: TourPricingRecord): TourPricingResponse {
+  return {
+    id: record.id,
+    tour_id: record.tour_id,
+    season_name: record.season_name,
+    start_date: record.start_date,
+    end_date: record.end_date,
+    sic_price_2_pax: { amount_minor: toMinorUnits(record.sic_price_2_pax), currency: record.currency },
+    sic_price_4_pax: { amount_minor: toMinorUnits(record.sic_price_4_pax), currency: record.currency },
+    sic_price_6_pax: { amount_minor: toMinorUnits(record.sic_price_6_pax), currency: record.currency },
+    sic_price_8_pax: { amount_minor: toMinorUnits(record.sic_price_8_pax), currency: record.currency },
+    sic_price_10_pax: { amount_minor: toMinorUnits(record.sic_price_10_pax), currency: record.currency },
+    pvt_price_2_pax: { amount_minor: toMinorUnits(record.pvt_price_2_pax), currency: record.currency },
+    pvt_price_4_pax: { amount_minor: toMinorUnits(record.pvt_price_4_pax), currency: record.currency },
+    pvt_price_6_pax: { amount_minor: toMinorUnits(record.pvt_price_6_pax), currency: record.currency },
+    pvt_price_8_pax: { amount_minor: toMinorUnits(record.pvt_price_8_pax), currency: record.currency },
+    pvt_price_10_pax: { amount_minor: toMinorUnits(record.pvt_price_10_pax), currency: record.currency },
+    notes: record.notes,
+    status: record.status,
+    effective_from: record.effective_from,
+    created_by: record.created_by,
+    created_at: record.created_at,
+    updated_at: record.updated_at,
+  };
+}
+
+// GET - Fetch tour pricing with pagination, search, sort, and filters
+export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
-    const tourId = searchParams.get('tour_id');
 
-    if (!tourId) {
-      return NextResponse.json({ error: 'tour_id is required' }, { status: 400 });
+    // Parse pagination parameters
+    const { page, pageSize, offset } = parsePaginationParams(searchParams);
+
+    // Parse filters
+    const tourId = searchParams.get('tour_id');
+    const seasonName = searchParams.get('season_name');
+    const status = searchParams.get('status') || 'active';
+    const search = searchParams.get('search');
+
+    // Parse sort parameters
+    const sortParam = searchParams.get('sort');
+    const sortClause = parseSortParams(sortParam) || 'start_date DESC';
+
+    // Build WHERE clause
+    const conditions: string[] = [];
+    const params: any[] = [];
+
+    if (tourId) {
+      conditions.push('tour_id = ?');
+      params.push(tourId);
     }
 
-    const pricing = await query(
-      `SELECT * FROM tour_pricing WHERE tour_id = ? ORDER BY start_date DESC`,
-      [tourId]
+    if (seasonName) {
+      conditions.push('season_name = ?');
+      params.push(seasonName);
+    }
+
+    if (status) {
+      conditions.push('status = ?');
+      params.push(status);
+    }
+
+    if (search) {
+      conditions.push('(season_name LIKE ? OR notes LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`);
+    }
+
+    const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(' AND ')}` : '';
+
+    // Get total count
+    const countResult = await query<{ total: number }>(
+      `SELECT COUNT(*) as total FROM tour_pricing ${whereClause}`,
+      params
+    );
+    const total = countResult[0]?.total || 0;
+
+    // Get paginated data
+    const records = await query<TourPricingRecord>(
+      `SELECT * FROM tour_pricing ${whereClause} ORDER BY ${sortClause} LIMIT ? OFFSET ?`,
+      [...params, pageSize, offset]
     );
 
-    return NextResponse.json(pricing);
+    // Convert to response format with Money types
+    const data = records.map(convertToResponse);
+
+    // Build paged response
+    const response = buildPagedResponse(data, total, page, pageSize);
+
+    return NextResponse.json(response);
   } catch (error) {
     console.error('Database error:', error);
     return NextResponse.json({ error: 'Failed to fetch pricing' }, { status: 500 });
@@ -24,9 +170,19 @@ export async function GET(request: Request) {
 }
 
 // POST - Create new pricing record
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    const body = await request.json();
+    // Check for idempotency key
+    const idempotencyKey = request.headers.get('Idempotency-Key');
+
+    if (idempotencyKey) {
+      const cachedResponse = await checkIdempotencyKey(request, idempotencyKey);
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+    }
+
+    const body: TourPricingInput = await request.json();
     const {
       tour_id,
       season_name,
@@ -55,75 +211,47 @@ export async function POST(request: Request) {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 3)`,
       [
         tour_id, season_name, start_date, end_date, currency,
-        sic_price_2_pax, sic_price_4_pax, sic_price_6_pax, sic_price_8_pax, sic_price_10_pax,
-        pvt_price_2_pax, pvt_price_4_pax, pvt_price_6_pax, pvt_price_8_pax, pvt_price_10_pax,
+        fromMinorUnits(sic_price_2_pax.amount_minor),
+        fromMinorUnits(sic_price_4_pax.amount_minor),
+        fromMinorUnits(sic_price_6_pax.amount_minor),
+        fromMinorUnits(sic_price_8_pax.amount_minor),
+        fromMinorUnits(sic_price_10_pax.amount_minor),
+        fromMinorUnits(pvt_price_2_pax.amount_minor),
+        fromMinorUnits(pvt_price_4_pax.amount_minor),
+        fromMinorUnits(pvt_price_6_pax.amount_minor),
+        fromMinorUnits(pvt_price_8_pax.amount_minor),
+        fromMinorUnits(pvt_price_10_pax.amount_minor),
         notes
       ]
     );
 
-    return NextResponse.json({ success: true, id: (result as any).insertId });
+    const insertId = (result as any).insertId;
+
+    // Fetch the created record
+    const created = await query<TourPricingRecord>(
+      'SELECT * FROM tour_pricing WHERE id = ?',
+      [insertId]
+    );
+
+    const createdRecord = created[0];
+    if (!createdRecord) {
+      return NextResponse.json({ error: 'Failed to fetch created record' }, { status: 500 });
+    }
+
+    const responseData = convertToResponse(createdRecord);
+
+    // Build response with Location header
+    const response = NextResponse.json(responseData, { status: 201 });
+    response.headers.set('Location', `/api/tour-pricing/${insertId}`);
+
+    // Store idempotency key if provided
+    if (idempotencyKey) {
+      storeIdempotencyKey(idempotencyKey, response);
+    }
+
+    return response;
   } catch (error) {
     console.error('Database error:', error);
     return NextResponse.json({ error: 'Failed to create pricing' }, { status: 500 });
-  }
-}
-
-// PUT - Update pricing record
-export async function PUT(request: Request) {
-  try {
-    const body = await request.json();
-    const {
-      id,
-      season_name,
-      start_date,
-      end_date,
-      currency,
-      sic_price_2_pax,
-      sic_price_4_pax,
-      sic_price_6_pax,
-      sic_price_8_pax,
-      sic_price_10_pax,
-      pvt_price_2_pax,
-      pvt_price_4_pax,
-      pvt_price_6_pax,
-      pvt_price_8_pax,
-      pvt_price_10_pax,
-      notes,
-      status
-    } = body;
-
-    await query(
-      `UPDATE tour_pricing SET
-        season_name = ?, start_date = ?, end_date = ?, currency = ?,
-        sic_price_2_pax = ?, sic_price_4_pax = ?, sic_price_6_pax = ?, sic_price_8_pax = ?, sic_price_10_pax = ?,
-        pvt_price_2_pax = ?, pvt_price_4_pax = ?, pvt_price_6_pax = ?, pvt_price_8_pax = ?, pvt_price_10_pax = ?,
-        notes = ?, status = ?
-      WHERE id = ?`,
-      [
-        season_name, start_date, end_date, currency,
-        sic_price_2_pax, sic_price_4_pax, sic_price_6_pax, sic_price_8_pax, sic_price_10_pax,
-        pvt_price_2_pax, pvt_price_4_pax, pvt_price_6_pax, pvt_price_8_pax, pvt_price_10_pax,
-        notes, status, id
-      ]
-    );
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('Database error:', error);
-    return NextResponse.json({ error: 'Failed to update pricing' }, { status: 500 });
-  }
-}
-
-// DELETE - Delete pricing record
-export async function DELETE(request: Request) {
-  try {
-    const { id } = await request.json();
-
-    await query('UPDATE tour_pricing SET status = ? WHERE id = ?', ['archived', id]);
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('Database error:', error);
-    return NextResponse.json({ error: 'Failed to delete pricing' }, { status: 500 });
   }
 }

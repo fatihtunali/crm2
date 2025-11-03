@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface NewRestaurantModalProps {
   isOpen: boolean;
@@ -7,6 +8,7 @@ interface NewRestaurantModalProps {
 }
 
 export default function NewRestaurantModal({ isOpen, onClose, onSuccess }: NewRestaurantModalProps) {
+  const { organizationId } = useAuth();
   const [formData, setFormData] = useState({
     restaurant_name: '',
     city: '',
@@ -62,9 +64,12 @@ export default function NewRestaurantModal({ isOpen, onClose, onSuccess }: NewRe
 
       const res = await fetch('/api/restaurants', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': organizationId
+        },
         body: JSON.stringify({
-          organization_id: 1,
+          organization_id: organizationId,
           restaurant_name: formData.restaurant_name,
           city: formData.city,
           meal_type: formData.meal_type,

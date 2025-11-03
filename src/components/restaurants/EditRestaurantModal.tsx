@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Restaurant {
   id: number;
@@ -37,6 +38,7 @@ interface EditRestaurantModalProps {
 }
 
 export default function EditRestaurantModal({ isOpen, onClose, onSuccess, restaurant }: EditRestaurantModalProps) {
+  const { organizationId } = useAuth();
   const [formData, setFormData] = useState({
     id: 0,
     organization_id: 1,
@@ -94,9 +96,13 @@ export default function EditRestaurantModal({ isOpen, onClose, onSuccess, restau
 
   async function fetchProviders() {
     try {
-      const res = await fetch('/api/providers');
+      const res = await fetch('/api/providers?limit=1000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
-      setProviders(data);
+      setProviders(Array.isArray(data.data) ? data.data : []);
     } catch (error) {
       console.error('Failed to fetch providers:', error);
     }

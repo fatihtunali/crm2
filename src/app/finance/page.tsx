@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 import Link from 'next/link';
 
 interface Supplier {
@@ -49,6 +50,7 @@ interface Summary {
 }
 
 export default function FinancePage() {
+  const { organizationId } = useAuth();
   const [activeTab, setActiveTab] = useState<'dashboard' | 'suppliers' | 'customers'>('dashboard');
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
   const [customers, setCustomers] = useState<Customer[]>([]);
@@ -63,17 +65,34 @@ export default function FinancePage() {
     setLoading(true);
     try {
       if (activeTab === 'dashboard') {
-        const res = await fetch('/api/finance/summary');
-        const data = await res.json();
-        setSummary(data);
+        const res = await fetch('/api/finance/summary', {
+          headers: {
+            'X-Tenant-Id': organizationId
+          }
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setSummary(data);
+        } else {
+          console.error('Failed to fetch summary');
+          setSummary(null);
+        }
       } else if (activeTab === 'suppliers') {
-        const res = await fetch('/api/finance/suppliers');
+        const res = await fetch('/api/finance/suppliers?limit=1000', {
+          headers: {
+            'X-Tenant-Id': organizationId
+          }
+        });
         const data = await res.json();
-        setSuppliers(Array.isArray(data) ? data : []);
+        setSuppliers(Array.isArray(data.data) ? data.data : []);
       } else if (activeTab === 'customers') {
-        const res = await fetch('/api/finance/customers');
+        const res = await fetch('/api/finance/customers?limit=1000', {
+          headers: {
+            'X-Tenant-Id': organizationId
+          }
+        });
         const data = await res.json();
-        setCustomers(Array.isArray(data) ? data : []);
+        setCustomers(Array.isArray(data.data) ? data.data : []);
       }
     } catch (error) {
       console.error('Failed to fetch financial data:', error);
@@ -148,21 +167,21 @@ function DashboardTab({ summary }: { summary: Summary }) {
           <div>
             <div className="text-sm text-gray-500 mb-1">Total Turnover (Revenue)</div>
             <div className="text-2xl font-bold text-primary-600">
-              €{Number(summary.totalTurnover || 0).toFixed(2)}
+              €{((summary.totalTurnover?.amount_minor || 0) / 100).toFixed(2)}
             </div>
             <div className="text-xs text-gray-500 mt-1">All customer invoices</div>
           </div>
           <div>
             <div className="text-sm text-gray-500 mb-1">Total Costs</div>
             <div className="text-2xl font-bold text-orange-600">
-              €{Number(summary.totalCosts || 0).toFixed(2)}
+              €{((summary.totalCosts?.amount_minor || 0) / 100).toFixed(2)}
             </div>
             <div className="text-xs text-gray-500 mt-1">All supplier invoices</div>
           </div>
           <div>
             <div className="text-sm text-gray-500 mb-1">Net Margin (Profit)</div>
-            <div className={`text-2xl font-bold ${summary.netMargin >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              €{Number(summary.netMargin || 0).toFixed(2)}
+            <div className={`text-2xl font-bold ${(summary.netMargin?.amount_minor || 0) >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+              €{((summary.netMargin?.amount_minor || 0) / 100).toFixed(2)}
             </div>
             <div className="text-xs text-gray-500 mt-1">Turnover - Costs</div>
           </div>
@@ -181,32 +200,32 @@ function DashboardTab({ summary }: { summary: Summary }) {
         <div className="bg-gradient-to-br from-green-50 to-green-100 rounded-lg shadow-sm p-6 border border-green-200">
           <div className="text-sm text-green-700 font-medium mb-1">💰 Receivables (They Owe Us)</div>
           <div className="text-3xl font-bold text-green-900">
-            €{Number(summary.receivables.total_outstanding || 0).toFixed(2)}
+            €{((summary?.receivables?.total_outstanding?.amount_minor || 0) / 100).toFixed(2)}
           </div>
           <div className="text-xs text-green-600 mt-2">
-            {summary.receivables.overdue_count || 0} overdue invoices
+            {summary?.receivables?.overdue_count || 0} overdue invoices
           </div>
         </div>
 
         <div className="bg-gradient-to-br from-red-50 to-red-100 rounded-lg shadow-sm p-6 border border-red-200">
           <div className="text-sm text-red-700 font-medium mb-1">💸 Payables (We Owe Them)</div>
           <div className="text-3xl font-bold text-red-900">
-            €{Number(summary.payables.total_outstanding || 0).toFixed(2)}
+            €{((summary?.payables?.total_outstanding?.amount_minor || 0) / 100).toFixed(2)}
           </div>
           <div className="text-xs text-red-600 mt-2">
-            {summary.payables.overdue_count || 0} overdue invoices
+            {summary?.payables?.overdue_count || 0} overdue invoices
           </div>
         </div>
 
-        <div className={`bg-gradient-to-br ${summary.netPosition >= 0 ? 'from-blue-50 to-blue-100 border-blue-200' : 'from-orange-50 to-orange-100 border-orange-200'} rounded-lg shadow-sm p-6 border`}>
-          <div className={`text-sm ${summary.netPosition >= 0 ? 'text-blue-700' : 'text-orange-700'} font-medium mb-1`}>
+        <div className={`bg-gradient-to-br ${(summary.netPosition?.amount_minor || 0) >= 0 ? 'from-blue-50 to-blue-100 border-blue-200' : 'from-orange-50 to-orange-100 border-orange-200'} rounded-lg shadow-sm p-6 border`}>
+          <div className={`text-sm ${(summary.netPosition?.amount_minor || 0) >= 0 ? 'text-blue-700' : 'text-orange-700'} font-medium mb-1`}>
             ⚖️ Net Position
           </div>
-          <div className={`text-3xl font-bold ${summary.netPosition >= 0 ? 'text-blue-900' : 'text-orange-900'}`}>
-            €{Math.abs(summary.netPosition).toFixed(2)}
+          <div className={`text-3xl font-bold ${(summary.netPosition?.amount_minor || 0) >= 0 ? 'text-blue-900' : 'text-orange-900'}`}>
+            €{(Math.abs(summary.netPosition?.amount_minor || 0) / 100).toFixed(2)}
           </div>
-          <div className={`text-xs ${summary.netPosition >= 0 ? 'text-blue-600' : 'text-orange-600'} mt-2`}>
-            {summary.netPosition >= 0 ? 'Net receivable' : 'Net payable'}
+          <div className={`text-xs ${(summary.netPosition?.amount_minor || 0) >= 0 ? 'text-blue-600' : 'text-orange-600'} mt-2`}>
+            {(summary.netPosition?.amount_minor || 0) >= 0 ? 'Net receivable' : 'Net payable'}
           </div>
         </div>
       </div>
@@ -220,19 +239,19 @@ function DashboardTab({ summary }: { summary: Summary }) {
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-600">0-30 days</span>
               <span className="font-bold text-gray-900">
-                €{Number(summary.receivablesAging.aging_0_30 || 0).toFixed(2)}
+                €{((summary?.receivablesAging?.aging_0_30?.amount_minor || 0) / 100).toFixed(2)}
               </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-600">31-60 days</span>
               <span className="font-bold text-yellow-600">
-                €{Number(summary.receivablesAging.aging_31_60 || 0).toFixed(2)}
+                €{((summary?.receivablesAging?.aging_31_60?.amount_minor || 0) / 100).toFixed(2)}
               </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-600">60+ days (Overdue)</span>
               <span className="font-bold text-red-600">
-                €{Number(summary.receivablesAging.aging_60_plus || 0).toFixed(2)}
+                €{((summary?.receivablesAging?.aging_60_plus?.amount_minor || 0) / 100).toFixed(2)}
               </span>
             </div>
           </div>
@@ -245,19 +264,19 @@ function DashboardTab({ summary }: { summary: Summary }) {
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-600">0-30 days</span>
               <span className="font-bold text-gray-900">
-                €{Number(summary.payablesAging.aging_0_30 || 0).toFixed(2)}
+                €{((summary?.payablesAging?.aging_0_30?.amount_minor || 0) / 100).toFixed(2)}
               </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-600">31-60 days</span>
               <span className="font-bold text-yellow-600">
-                €{Number(summary.payablesAging.aging_31_60 || 0).toFixed(2)}
+                €{((summary?.payablesAging?.aging_31_60?.amount_minor || 0) / 100).toFixed(2)}
               </span>
             </div>
             <div className="flex justify-between items-center">
               <span className="text-sm text-gray-600">60+ days (Overdue)</span>
               <span className="font-bold text-red-600">
-                €{Number(summary.payablesAging.aging_60_plus || 0).toFixed(2)}
+                €{((summary?.payablesAging?.aging_60_plus?.amount_minor || 0) / 100).toFixed(2)}
               </span>
             </div>
           </div>
@@ -269,7 +288,7 @@ function DashboardTab({ summary }: { summary: Summary }) {
         {/* Top Suppliers We Owe */}
         <div className="bg-white rounded-lg shadow-sm p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">🏢 Top 5 Suppliers We Owe</h3>
-          {summary.topSuppliers.length === 0 ? (
+          {!summary?.topSuppliers || summary.topSuppliers.length === 0 ? (
             <p className="text-sm text-gray-500">No outstanding supplier payments</p>
           ) : (
             <div className="space-y-3">
@@ -277,7 +296,7 @@ function DashboardTab({ summary }: { summary: Summary }) {
                 <div key={idx} className="flex justify-between items-center pb-2 border-b border-gray-100 last:border-0">
                   <span className="text-sm text-gray-700 font-medium">{supplier.provider_name}</span>
                   <span className="font-bold text-red-600">
-                    €{Number(supplier.outstanding).toFixed(2)}
+                    €{((supplier.outstanding?.amount_minor || 0) / 100).toFixed(2)}
                   </span>
                 </div>
               ))}
@@ -288,7 +307,7 @@ function DashboardTab({ summary }: { summary: Summary }) {
         {/* Top Customers Who Owe Us */}
         <div className="bg-white rounded-lg shadow-sm p-6">
           <h3 className="text-lg font-semibold text-gray-900 mb-4">👥 Top 5 Customers Who Owe Us</h3>
-          {summary.topCustomers.length === 0 ? (
+          {!summary?.topCustomers || summary.topCustomers.length === 0 ? (
             <p className="text-sm text-gray-500">No outstanding customer payments</p>
           ) : (
             <div className="space-y-3">
@@ -296,7 +315,7 @@ function DashboardTab({ summary }: { summary: Summary }) {
                 <div key={idx} className="flex justify-between items-center pb-2 border-b border-gray-100 last:border-0">
                   <span className="text-sm text-gray-700 font-medium">{customer.customer_name}</span>
                   <span className="font-bold text-green-600">
-                    €{Number(customer.outstanding).toFixed(2)}
+                    €{((customer.outstanding?.amount_minor || 0) / 100).toFixed(2)}
                   </span>
                 </div>
               ))}
@@ -346,16 +365,16 @@ function SuppliersTab({ suppliers }: { suppliers: Supplier[] }) {
                   </div>
                 </td>
                 <td className="p-4 text-right font-bold text-gray-900">
-                  €{Number(supplier.total_invoiced).toFixed(2)}
+                  €{((supplier.total_invoiced?.amount_minor || 0) / 100).toFixed(2)}
                 </td>
                 <td className="p-4 text-right text-green-600">
-                  €{Number(supplier.total_paid).toFixed(2)}
+                  €{((supplier.total_paid?.amount_minor || 0) / 100).toFixed(2)}
                 </td>
                 <td className="p-4 text-right font-bold text-red-600">
-                  €{Number(supplier.outstanding).toFixed(2)}
+                  €{((supplier.outstanding?.amount_minor || 0) / 100).toFixed(2)}
                 </td>
                 <td className="p-4">
-                  {supplier.outstanding > 0 ? (
+                  {(supplier.outstanding?.amount_minor || 0) > 0 ? (
                     supplier.overdue_count > 0 ? (
                       <span className="px-2 py-1 bg-red-100 text-red-700 rounded text-xs font-medium">
                         {supplier.overdue_count} Overdue
@@ -421,16 +440,16 @@ function CustomersTab({ customers }: { customers: Customer[] }) {
                   </div>
                 </td>
                 <td className="p-4 text-right font-bold text-gray-900">
-                  €{Number(customer.total_invoiced).toFixed(2)}
+                  €{((customer.total_invoiced?.amount_minor || 0) / 100).toFixed(2)}
                 </td>
                 <td className="p-4 text-right text-green-600">
-                  €{Number(customer.total_received).toFixed(2)}
+                  €{((customer.total_received?.amount_minor || 0) / 100).toFixed(2)}
                 </td>
                 <td className="p-4 text-right font-bold text-orange-600">
-                  €{Number(customer.outstanding).toFixed(2)}
+                  €{((customer.outstanding?.amount_minor || 0) / 100).toFixed(2)}
                 </td>
                 <td className="p-4">
-                  {customer.outstanding > 0 ? (
+                  {(customer.outstanding?.amount_minor || 0) > 0 ? (
                     customer.overdue_count > 0 ? (
                       <span className="px-2 py-1 bg-red-100 text-red-700 rounded text-xs font-medium">
                         {customer.overdue_count} Overdue

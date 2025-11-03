@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Booking {
   id: number;
@@ -23,6 +24,7 @@ interface Booking {
 }
 
 export default function BookingsPage() {
+  const { organizationId } = useAuth();
   const [bookings, setBookings] = useState<Booking[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -33,9 +35,14 @@ export default function BookingsPage() {
   async function fetchBookings() {
     try {
       // Fetch only accepted quotes (bookings)
-      const res = await fetch('/api/quotations?status=accepted');
+      const res = await fetch('/api/quotations?status=accepted&limit=10000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
-      setBookings(Array.isArray(data) ? data : []);
+      const bookingsData = Array.isArray(data.data) ? data.data : [];
+      setBookings(bookingsData);
     } catch (error) {
       console.error('Failed to fetch bookings:', error);
       setBookings([]);

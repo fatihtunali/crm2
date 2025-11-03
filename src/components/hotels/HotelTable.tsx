@@ -1,3 +1,5 @@
+import { useState, Fragment } from 'react';
+
 interface Hotel {
   id: number;
   google_place_id: string | null;
@@ -59,6 +61,19 @@ export default function HotelTable({
   onDelete,
   onManagePricing
 }: HotelTableProps) {
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+
+  const toggleExpand = (id: number) => {
+    setExpandedRows(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  };
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'active': return 'bg-green-100 text-green-700';
@@ -98,6 +113,17 @@ export default function HotelTable({
     return '⭐'.repeat(rating);
   };
 
+  const formatPrice = (price: number | null, currency: string = 'EUR') => {
+    if (price === null || price === undefined) return '-';
+    const numPrice = typeof price === 'string' ? parseFloat(price) : price;
+    if (isNaN(numPrice)) return '-';
+    return `${currency} ${numPrice.toFixed(2)}`;
+  };
+
+  const hasPricing = (hotel: Hotel) => {
+    return hotel.pricing_id !== null;
+  };
+
   const getPriceInfo = (hotel: Hotel) => {
     if (!hotel.pricing_id || !hotel.double_room_bb) {
       return 'No pricing';
@@ -107,6 +133,16 @@ export default function HotelTable({
     const price = parseFloat(hotel.double_room_bb.toString()).toFixed(2);
 
     return `${currency} ${price} / night`;
+  };
+
+  const getMealPlanLabel = (plan: string | null) => {
+    const labels: { [key: string]: string } = {
+      'BB': 'Bed & Breakfast',
+      'HB': 'Half Board',
+      'FB': 'Full Board',
+      'AI': 'All Inclusive'
+    };
+    return plan ? labels[plan] || plan : 'N/A';
   };
 
   if (loading) {
@@ -131,6 +167,7 @@ export default function HotelTable({
         <table className="w-full">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"></th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hotel</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">City</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rating</th>
@@ -141,8 +178,25 @@ export default function HotelTable({
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {hotels.map((hotel) => (
-              <tr key={hotel.id} className="hover:bg-gray-50">
+            {hotels.map((hotel) => {
+              const isExpanded = expandedRows.has(hotel.id);
+              const showPricing = hasPricing(hotel);
+
+              return (
+                <Fragment key={hotel.id}>
+                  {/* Main Row */}
+                  <tr className="hover:bg-gray-50">
+                    <td className="px-4 py-4">
+                      {showPricing && (
+                        <button
+                          onClick={() => toggleExpand(hotel.id)}
+                          className="text-gray-400 hover:text-gray-600 transition-transform"
+                          style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                        >
+                          ▶
+                        </button>
+                      )}
+                    </td>
                 <td className="px-6 py-4">
                   <div className="flex items-center">
                     {hotel.photo_url_1 && (
@@ -219,7 +273,108 @@ export default function HotelTable({
                   </div>
                 </td>
               </tr>
-            ))}
+
+              {/* Expandable Pricing Row */}
+              {isExpanded && showPricing && (
+                <tr className="bg-gray-50">
+                  <td colSpan={8} className="px-4 py-4">
+                    <div className="ml-12 mr-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-semibold text-gray-700">
+                          Pricing Details {hotel.season_name && `- ${hotel.season_name}`}
+                        </h4>
+                        {hotel.season_start && hotel.season_end && (
+                          <span className="text-xs text-gray-500">
+                            Valid: {new Date(hotel.season_start).toLocaleDateString()} - {new Date(hotel.season_end).toLocaleDateString()}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="grid grid-cols-2 gap-4">
+                        {/* Room Rates Table */}
+                        <div className="bg-white rounded-lg border border-blue-200 overflow-hidden">
+                          <div className="bg-blue-50 px-4 py-2 border-b border-blue-200">
+                            <h5 className="text-sm font-semibold text-blue-900">Room Rates</h5>
+                            <p className="text-xs text-blue-600">Base: {getMealPlanLabel(hotel.base_meal_plan)}</p>
+                          </div>
+                          <table className="w-full text-sm">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Room Type</th>
+                                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Price / Night</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200">
+                              <tr className="hover:bg-gray-50">
+                                <td className="px-4 py-2 text-gray-700">Double Room</td>
+                                <td className="px-4 py-2 text-right font-semibold text-blue-700">{formatPrice(hotel.double_room_bb, hotel.currency || 'EUR')}</td>
+                              </tr>
+                              <tr className="hover:bg-gray-50">
+                                <td className="px-4 py-2 text-gray-700">Single Supplement</td>
+                                <td className="px-4 py-2 text-right font-semibold text-blue-700">{formatPrice(hotel.single_supplement_bb, hotel.currency || 'EUR')}</td>
+                              </tr>
+                              <tr className="hover:bg-gray-50">
+                                <td className="px-4 py-2 text-gray-700">Triple Room</td>
+                                <td className="px-4 py-2 text-right font-semibold text-blue-700">{formatPrice(hotel.triple_room_bb, hotel.currency || 'EUR')}</td>
+                              </tr>
+                              <tr className="hover:bg-gray-50">
+                                <td className="px-4 py-2 text-gray-700">Child (0-6 years)</td>
+                                <td className="px-4 py-2 text-right font-semibold text-blue-700">{formatPrice(hotel.child_0_6_bb, hotel.currency || 'EUR')}</td>
+                              </tr>
+                              <tr className="hover:bg-gray-50">
+                                <td className="px-4 py-2 text-gray-700">Child (6-12 years)</td>
+                                <td className="px-4 py-2 text-right font-semibold text-blue-700">{formatPrice(hotel.child_6_12_bb, hotel.currency || 'EUR')}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+
+                        {/* Meal Plan Supplements Table */}
+                        <div className="bg-white rounded-lg border border-green-200 overflow-hidden">
+                          <div className="bg-green-50 px-4 py-2 border-b border-green-200">
+                            <h5 className="text-sm font-semibold text-green-900">Meal Plan Supplements</h5>
+                            <p className="text-xs text-green-600">Additional charges per person/night</p>
+                          </div>
+                          <table className="w-full text-sm">
+                            <thead className="bg-gray-50">
+                              <tr>
+                                <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 uppercase">Meal Plan</th>
+                                <th className="px-4 py-2 text-right text-xs font-medium text-gray-500 uppercase">Supplement</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-200">
+                              <tr className="hover:bg-gray-50">
+                                <td className="px-4 py-2 text-gray-700">
+                                  <div className="font-medium">Half Board (HB)</div>
+                                  <div className="text-xs text-gray-500">Breakfast + Dinner</div>
+                                </td>
+                                <td className="px-4 py-2 text-right font-semibold text-green-700">{formatPrice(hotel.hb_supplement, hotel.currency || 'EUR')}</td>
+                              </tr>
+                              <tr className="hover:bg-gray-50">
+                                <td className="px-4 py-2 text-gray-700">
+                                  <div className="font-medium">Full Board (FB)</div>
+                                  <div className="text-xs text-gray-500">Breakfast + Lunch + Dinner</div>
+                                </td>
+                                <td className="px-4 py-2 text-right font-semibold text-green-700">{formatPrice(hotel.fb_supplement, hotel.currency || 'EUR')}</td>
+                              </tr>
+                              <tr className="hover:bg-gray-50">
+                                <td className="px-4 py-2 text-gray-700">
+                                  <div className="font-medium">All Inclusive (AI)</div>
+                                  <div className="text-xs text-gray-500">All meals + drinks + snacks</div>
+                                </td>
+                                <td className="px-4 py-2 text-right font-semibold text-green-700">{formatPrice(hotel.ai_supplement, hotel.currency || 'EUR')}</td>
+                              </tr>
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  </td>
+                </tr>
+              )}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>

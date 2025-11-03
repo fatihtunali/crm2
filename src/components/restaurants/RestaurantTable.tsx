@@ -1,3 +1,5 @@
+import { useState, Fragment } from 'react';
+
 interface Restaurant {
   id: number;
   organization_id: number;
@@ -39,6 +41,20 @@ export default function RestaurantTable({
   onDelete,
   onManageSeasons
 }: RestaurantTableProps) {
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+
+  const toggleExpand = (id: number) => {
+    setExpandedRows(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'active': return 'bg-green-100 text-green-700';
@@ -46,6 +62,13 @@ export default function RestaurantTable({
       case 'archived': return 'bg-red-100 text-red-700';
       default: return 'bg-gray-100 text-gray-700';
     }
+  };
+
+  const formatPrice = (price: number | null, currency: string = 'EUR') => {
+    if (price === null || price === undefined) return '-';
+    const numPrice = typeof price === 'string' ? parseFloat(price) : price;
+    if (isNaN(numPrice)) return '-';
+    return `${currency} ${numPrice.toFixed(2)}`;
   };
 
   const getPriceDisplay = (restaurant: Restaurant) => {
@@ -88,6 +111,7 @@ export default function RestaurantTable({
         <table className="w-full">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"></th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Provider / Company</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Restaurant</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">City</th>
@@ -99,65 +123,174 @@ export default function RestaurantTable({
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {restaurants.map((restaurant) => (
-              <tr key={restaurant.id} className="hover:bg-gray-50">
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm font-medium text-gray-900">{restaurant.provider_name || 'Not assigned'}</div>
-                  {restaurant.provider_id && <div className="text-xs font-mono text-gray-500">Provider #{restaurant.provider_id}</div>}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm font-medium text-gray-900">{restaurant.restaurant_name}</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">{restaurant.city}</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">{restaurant.meal_type}</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm font-medium text-gray-900">{restaurant.season_name}</div>
-                  <div className="text-xs text-gray-500">
-                    {new Date(restaurant.start_date).toLocaleDateString('en-GB')} - {new Date(restaurant.end_date).toLocaleDateString('en-GB')}
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm font-semibold text-gray-900">{getPriceDisplay(restaurant)}</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`px-2 py-1 text-xs rounded-full font-medium ${getStatusColor(restaurant.status)}`}>
-                    {restaurant.status}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      onClick={() => onView(restaurant)}
-                      className="text-primary-600 hover:text-primary-900 px-3 py-1 rounded hover:bg-primary-50 transition-colors"
-                    >
-                      View
-                    </button>
-                    <button
-                      onClick={() => onEdit(restaurant)}
-                      className="text-blue-600 hover:text-blue-900 px-3 py-1 rounded hover:bg-blue-50 transition-colors"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => onManageSeasons(restaurant)}
-                      className="text-green-600 hover:text-green-900 px-3 py-1 rounded hover:bg-green-50 transition-colors"
-                    >
-                      Seasons
-                    </button>
-                    <button
-                      onClick={() => onDelete(restaurant)}
-                      className="text-red-600 hover:text-red-900 px-3 py-1 rounded hover:bg-red-50 transition-colors"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+            {restaurants.map((restaurant) => {
+              const isExpanded = expandedRows.has(restaurant.id);
+
+              return (
+                <Fragment key={restaurant.id}>
+                  {/* Main Row */}
+                  <tr className="hover:bg-gray-50">
+                    <td className="px-4 py-4">
+                      <button
+                        onClick={() => toggleExpand(restaurant.id)}
+                        className="text-gray-400 hover:text-gray-600 transition-transform"
+                        style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                      >
+                        ▶
+                      </button>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">{restaurant.provider_name || 'Not assigned'}</div>
+                      {restaurant.provider_id && <div className="text-xs font-mono text-gray-500">Provider #{restaurant.provider_id}</div>}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">{restaurant.restaurant_name}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{restaurant.city}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{restaurant.meal_type}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">{restaurant.season_name}</div>
+                      <div className="text-xs text-gray-500">
+                        {new Date(restaurant.start_date).toLocaleDateString('en-GB')} - {new Date(restaurant.end_date).toLocaleDateString('en-GB')}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-semibold text-gray-900">{getPriceDisplay(restaurant)}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 py-1 text-xs rounded-full font-medium ${getStatusColor(restaurant.status)}`}>
+                        {restaurant.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => onView(restaurant)}
+                          className="text-primary-600 hover:text-primary-900 px-3 py-1 rounded hover:bg-primary-50 transition-colors"
+                        >
+                          View
+                        </button>
+                        <button
+                          onClick={() => onEdit(restaurant)}
+                          className="text-blue-600 hover:text-blue-900 px-3 py-1 rounded hover:bg-blue-50 transition-colors"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => onManageSeasons(restaurant)}
+                          className="text-green-600 hover:text-green-900 px-3 py-1 rounded hover:bg-green-50 transition-colors"
+                        >
+                          Seasons
+                        </button>
+                        <button
+                          onClick={() => onDelete(restaurant)}
+                          className="text-red-600 hover:text-red-900 px-3 py-1 rounded hover:bg-red-50 transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+
+                  {/* Expandable Pricing Details Row */}
+                  {isExpanded && (
+                    <tr>
+                      <td colSpan={9} className="px-6 py-4 bg-gray-50">
+                        <div className="grid grid-cols-2 gap-4">
+                          {/* Restaurant Pricing Table */}
+                          <div>
+                            <h4 className="text-sm font-semibold text-gray-700 mb-2 bg-blue-50 px-3 py-1 rounded">
+                              Restaurant Pricing
+                            </h4>
+                            <table className="min-w-full text-sm">
+                              <tbody className="divide-y divide-gray-200">
+                                <tr>
+                                  <td className="py-2 font-medium text-gray-600">Adult Lunch Price</td>
+                                  <td className="py-2 text-gray-900">{formatPrice(restaurant.adult_lunch_price, restaurant.currency)}</td>
+                                </tr>
+                                <tr>
+                                  <td className="py-2 font-medium text-gray-600">Child Lunch Price</td>
+                                  <td className="py-2 text-gray-900">{formatPrice(restaurant.child_lunch_price, restaurant.currency)}</td>
+                                </tr>
+                                <tr>
+                                  <td className="py-2 font-medium text-gray-600">Adult Dinner Price</td>
+                                  <td className="py-2 text-gray-900">{formatPrice(restaurant.adult_dinner_price, restaurant.currency)}</td>
+                                </tr>
+                                <tr>
+                                  <td className="py-2 font-medium text-gray-600">Child Dinner Price</td>
+                                  <td className="py-2 text-gray-900">{formatPrice(restaurant.child_dinner_price, restaurant.currency)}</td>
+                                </tr>
+                                <tr>
+                                  <td className="py-2 font-medium text-gray-600">Currency</td>
+                                  <td className="py-2 text-gray-900">{restaurant.currency}</td>
+                                </tr>
+                                <tr>
+                                  <td className="py-2 font-medium text-gray-600">Season Period</td>
+                                  <td className="py-2 text-gray-900">
+                                    {new Date(restaurant.start_date).toLocaleDateString('en-GB')} - {new Date(restaurant.end_date).toLocaleDateString('en-GB')}
+                                  </td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+
+                          {/* Restaurant Information Table */}
+                          <div>
+                            <h4 className="text-sm font-semibold text-gray-700 mb-2 bg-green-50 px-3 py-1 rounded">
+                              Restaurant Information
+                            </h4>
+                            <table className="min-w-full text-sm">
+                              <tbody className="divide-y divide-gray-200">
+                                {restaurant.menu_description && (
+                                  <tr>
+                                    <td className="py-2 font-medium text-gray-600">Menu Description</td>
+                                    <td className="py-2 text-gray-900">{restaurant.menu_description}</td>
+                                  </tr>
+                                )}
+                                {restaurant.effective_from && (
+                                  <tr>
+                                    <td className="py-2 font-medium text-gray-600">Effective From</td>
+                                    <td className="py-2 text-gray-900">
+                                      {new Date(restaurant.effective_from).toLocaleDateString('en-GB')}
+                                    </td>
+                                  </tr>
+                                )}
+                                {restaurant.notes && (
+                                  <tr>
+                                    <td className="py-2 font-medium text-gray-600">Notes</td>
+                                    <td className="py-2 text-gray-900">{restaurant.notes}</td>
+                                  </tr>
+                                )}
+                                {restaurant.created_by && (
+                                  <tr>
+                                    <td className="py-2 font-medium text-gray-600">Created By</td>
+                                    <td className="py-2 text-gray-900">{restaurant.created_by}</td>
+                                  </tr>
+                                )}
+                                <tr>
+                                  <td className="py-2 font-medium text-gray-600">Created At</td>
+                                  <td className="py-2 text-gray-900">
+                                    {new Date(restaurant.created_at).toLocaleDateString('en-GB')}
+                                  </td>
+                                </tr>
+                                <tr>
+                                  <td className="py-2 font-medium text-gray-600">Restaurant ID</td>
+                                  <td className="py-2 text-gray-900">#{restaurant.id}</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
+                  )}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>

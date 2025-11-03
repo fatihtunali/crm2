@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface NewAgentModalProps {
   isOpen: boolean;
@@ -7,6 +8,7 @@ interface NewAgentModalProps {
 }
 
 export default function NewAgentModal({ isOpen, onClose, onSuccess }: NewAgentModalProps) {
+  const { organizationId } = useAuth();
   const [formData, setFormData] = useState({
     name: '',
     email: '',
@@ -42,7 +44,10 @@ export default function NewAgentModal({ isOpen, onClose, onSuccess }: NewAgentMo
 
       const res = await fetch('/api/agents', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': organizationId
+        },
         body: JSON.stringify({
           name: formData.name,
           email: formData.email,

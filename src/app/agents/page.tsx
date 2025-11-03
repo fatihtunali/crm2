@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 import AgentFilters from '@/components/agents/AgentFilters';
 import AgentTable from '@/components/agents/AgentTable';
 import ViewAgentModal from '@/components/agents/ViewAgentModal';
@@ -21,6 +22,7 @@ interface Agent {
 }
 
 export default function AgentsPage() {
+  const { organizationId } = useAuth();
   const [agents, setAgents] = useState<Agent[]>([]);
   const [filteredAgents, setFilteredAgents] = useState<Agent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -47,11 +49,17 @@ export default function AgentsPage() {
 
   async function fetchAgents() {
     try {
-      const res = await fetch('/api/agents');
+      const res = await fetch('/api/agents?limit=10000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
-      setAgents(data);
+      const agentsData = Array.isArray(data.data) ? data.data : [];
+      setAgents(agentsData);
     } catch (error) {
       console.error('Failed to fetch agents:', error);
+      setAgents([]);
     } finally {
       setLoading(false);
     }
@@ -106,7 +114,10 @@ export default function AgentsPage() {
     try {
       const res = await fetch('/api/agents', {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': organizationId
+        },
         body: JSON.stringify({ id: selectedAgent.id })
       });
 

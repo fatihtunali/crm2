@@ -1,57 +1,122 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { parsePaginationParams, buildPagedResponse, parseSortParams } from '@/lib/pagination';
+import { errorResponse, internalServerErrorProblem } from '@/lib/response';
+import { requireTenant } from '@/middleware/tenancy';
 
-// GET - Fetch all meal pricing records
-export async function GET(request: Request) {
+// GET - Fetch all meal pricing records with pagination
+export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const statusFilter = searchParams.get('status');
-    const cityFilter = searchParams.get('city');
-    const mealTypeFilter = searchParams.get('meal_type');
+    // Require tenant
+    const tenantResult = requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { tenantId } = tenantResult;
 
-    let sql = `
+    const { searchParams } = new URL(request.url);
+
+    // Parse pagination parameters
+    const { page, pageSize, offset } = parsePaginationParams(searchParams);
+
+    // Parse sort parameter (default: restaurant_name ASC, season_name ASC)
+    const sortParam = searchParams.get('sort') || 'restaurant_name,season_name';
+    const orderByClause = parseSortParams(sortParam) || 'restaurant_name ASC, season_name ASC';
+
+    // Build WHERE conditions manually with table qualifiers
+    const whereConditions: string[] = [];
+    const params: any[] = [];
+
+    // Add tenancy filter
+    whereConditions.push('mp.organization_id = ?');
+    params.push(parseInt(tenantId));
+
+    // Status filter
+    const statusFilter = searchParams.get('status');
+    if (statusFilter && statusFilter !== 'all') {
+      whereConditions.push('mp.status = ?');
+      params.push(statusFilter);
+    }
+
+    // City filter
+    const cityFilter = searchParams.get('city');
+    if (cityFilter && cityFilter !== 'all') {
+      whereConditions.push('mp.city = ?');
+      params.push(cityFilter);
+    }
+
+    // Meal type filter
+    const mealTypeFilter = searchParams.get('meal_type');
+    if (mealTypeFilter && mealTypeFilter !== 'all') {
+      whereConditions.push('mp.meal_type = ?');
+      params.push(mealTypeFilter);
+    }
+
+    // Build search clause
+    const searchTerm = searchParams.get('search');
+    if (searchTerm && searchTerm.trim() !== '') {
+      whereConditions.push('(mp.restaurant_name LIKE ? OR mp.city LIKE ?)');
+      const searchValue = `%${searchTerm}%`;
+      params.push(searchValue, searchValue);
+    }
+
+    const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : '';
+
+    // Base query
+    const baseQuery = `
       SELECT
         mp.*,
         p.provider_name
       FROM meal_pricing mp
       LEFT JOIN providers p ON mp.provider_id = p.id
-      WHERE 1=1
     `;
 
-    const params: any[] = [];
+    // Build WHERE clause SQL
+    const whereSQL = whereClause ? `WHERE ${whereClause}` : '';
 
-    if (statusFilter && statusFilter !== 'all') {
-      sql += ' AND status = ?';
-      params.push(statusFilter);
-    }
+    // Build main query with pagination
+    const mainSQL = `${baseQuery} ${whereSQL} ORDER BY ${orderByClause} LIMIT ? OFFSET ?`;
+    params.push(pageSize, offset);
 
-    if (cityFilter && cityFilter !== 'all') {
-      sql += ' AND city = ?';
-      params.push(cityFilter);
-    }
+    // Build count query
+    const countSQL = `SELECT COUNT(*) as total FROM meal_pricing mp LEFT JOIN providers p ON mp.provider_id = p.id ${whereSQL}`;
 
-    if (mealTypeFilter && mealTypeFilter !== 'all') {
-      sql += ' AND meal_type = ?';
-      params.push(mealTypeFilter);
-    }
+    // Build count params (without pagination params)
+    const countParams = params.slice(0, -2);
 
-    sql += ' ORDER BY restaurant_name ASC, season_name ASC';
+    // Execute both queries in parallel
+    const [rows, countResult] = await Promise.all([
+      query(mainSQL, params),
+      query(countSQL, countParams)
+    ]);
 
-    const rows = await query(sql, params);
+    const total = (countResult as any)[0].total;
 
-    return NextResponse.json(rows);
+    // Return paginated response
+    const pagedResponse = buildPagedResponse(rows, total, page, pageSize);
+
+    return NextResponse.json(pagedResponse);
   } catch (error) {
     console.error('Database error:', error);
-    return NextResponse.json({ error: 'Failed to fetch restaurants' }, { status: 500 });
+    return errorResponse(internalServerErrorProblem('Failed to fetch restaurants'));
   }
 }
 
 // POST - Create new meal pricing record
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    // Require tenant
+    const tenantResult = requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { tenantId } = tenantResult;
+
+    // Check for idempotency key
+    const idempotencyKey = request.headers.get('Idempotency-Key');
+
     const body = await request.json();
     const {
-      organization_id,
       restaurant_name,
       city,
       meal_type,
@@ -69,6 +134,29 @@ export async function POST(request: Request) {
       notes
     } = body;
 
+    // If idempotency key is provided, check if this request was already processed
+    if (idempotencyKey) {
+      const existingResult = await query(
+        `SELECT id FROM meal_pricing WHERE created_by = ? AND restaurant_name = ? AND season_name = ?
+         ORDER BY created_at DESC LIMIT 1`,
+        [created_by, restaurant_name, season_name]
+      );
+
+      if ((existingResult as any[]).length > 0) {
+        const existingId = (existingResult as any[])[0].id;
+        // Return existing resource with 201 status and Location header
+        return NextResponse.json(
+          { id: existingId, message: 'Resource already exists' },
+          {
+            status: 201,
+            headers: {
+              Location: `/api/restaurants/${existingId}`,
+            },
+          }
+        );
+      }
+    }
+
     const result = await query(
       `INSERT INTO meal_pricing (
         organization_id, restaurant_name, city, meal_type, season_name,
@@ -77,7 +165,7 @@ export async function POST(request: Request) {
         created_by, notes, status
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
       [
-        organization_id || 1,
+        tenantId,
         restaurant_name,
         city,
         meal_type,
@@ -96,90 +184,21 @@ export async function POST(request: Request) {
       ]
     );
 
-    return NextResponse.json({ success: true, id: (result as any).insertId });
-  } catch (error) {
-    console.error('Database error:', error);
-    return NextResponse.json({ error: 'Failed to create restaurant pricing' }, { status: 500 });
-  }
-}
+    const insertId = (result as any).insertId;
 
-// PUT - Update meal pricing record
-export async function PUT(request: Request) {
-  try {
-    const body = await request.json();
-    const {
-      id,
-      organization_id,
-      provider_id,
-      restaurant_name,
-      city,
-      meal_type,
-      season_name,
-      start_date,
-      end_date,
-      currency,
-      adult_lunch_price,
-      child_lunch_price,
-      adult_dinner_price,
-      child_dinner_price,
-      menu_description,
-      effective_from,
-      created_by,
-      notes,
-      status
-    } = body;
-
-    await query(
-      `UPDATE meal_pricing SET
-        organization_id = ?, provider_id = ?, restaurant_name = ?, city = ?, meal_type = ?,
-        season_name = ?, start_date = ?, end_date = ?, currency = ?,
-        adult_lunch_price = ?, child_lunch_price = ?, adult_dinner_price = ?,
-        child_dinner_price = ?, menu_description = ?, effective_from = ?,
-        created_by = ?, notes = ?, status = ?
-      WHERE id = ?`,
-      [
-        organization_id,
-        provider_id,
-        restaurant_name,
-        city,
-        meal_type,
-        season_name,
-        start_date,
-        end_date,
-        currency,
-        adult_lunch_price,
-        child_lunch_price,
-        adult_dinner_price,
-        child_dinner_price,
-        menu_description,
-        effective_from,
-        created_by,
-        notes,
-        status,
-        id
-      ]
+    // Return 201 Created with Location header
+    return NextResponse.json(
+      { id: insertId },
+      {
+        status: 201,
+        headers: {
+          Location: `/api/restaurants/${insertId}`,
+        },
+      }
     );
-
-    return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Database error:', error);
-    return NextResponse.json({ error: 'Failed to update restaurant pricing' }, { status: 500 });
+    return errorResponse(internalServerErrorProblem('Failed to create restaurant pricing'));
   }
 }
 
-// DELETE - Soft delete (archive) meal pricing record
-export async function DELETE(request: Request) {
-  try {
-    const { id } = await request.json();
-
-    await query(
-      'UPDATE meal_pricing SET status = ? WHERE id = ?',
-      ['inactive', id]
-    );
-
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('Database error:', error);
-    return NextResponse.json({ error: 'Failed to archive restaurant pricing' }, { status: 500 });
-  }
-}

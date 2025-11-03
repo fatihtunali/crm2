@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Agent {
   id: number;
@@ -18,6 +19,7 @@ interface EditAgentModalProps {
 }
 
 export default function EditAgentModal({ isOpen, onClose, onSuccess, agent }: EditAgentModalProps) {
+  const { organizationId } = useAuth();
   const [formData, setFormData] = useState({
     id: 0,
     name: '',
@@ -69,7 +71,10 @@ export default function EditAgentModal({ isOpen, onClose, onSuccess, agent }: Ed
 
       const res = await fetch('/api/agents', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': organizationId
+        },
         body: JSON.stringify({
           id: formData.id,
           name: formData.name,

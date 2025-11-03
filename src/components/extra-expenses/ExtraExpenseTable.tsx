@@ -1,3 +1,5 @@
+import { useState, Fragment } from 'react';
+
 interface ExtraExpense {
   id: number;
   organization_id: number;
@@ -30,6 +32,20 @@ export default function ExtraExpenseTable({
   onEdit,
   onDelete
 }: ExtraExpenseTableProps) {
+  const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
+
+  const toggleExpand = (id: number) => {
+    setExpandedRows(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(id)) {
+        newSet.delete(id);
+      } else {
+        newSet.add(id);
+      }
+      return newSet;
+    });
+  };
+
   const getStatusColor = (status: string) => {
     switch (status) {
       case 'active': return 'bg-green-100 text-green-700';
@@ -40,7 +56,7 @@ export default function ExtraExpenseTable({
 
   const formatPrice = (price: number, currency: string) => {
     const numPrice = parseFloat(price.toString());
-    return `${numPrice.toFixed(2)} ${currency}`;
+    return `${currency} ${numPrice.toFixed(2)}`;
   };
 
   if (loading) {
@@ -65,6 +81,8 @@ export default function ExtraExpenseTable({
         <table className="w-full">
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
+              <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"></th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Provider / Company</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expense Name</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">City</th>
@@ -75,57 +93,150 @@ export default function ExtraExpenseTable({
             </tr>
           </thead>
           <tbody className="bg-white divide-y divide-gray-200">
-            {expenses.map((expense) => (
-              <tr key={expense.id} className="hover:bg-gray-50">
-                <td className="px-6 py-4">
-                  <div className="text-sm font-medium text-gray-900">{expense.expense_name}</div>
-                  {expense.description && (
-                    <div className="text-xs text-gray-500 truncate max-w-xs">{expense.description}</div>
+            {expenses.map((expense) => {
+              const isExpanded = expandedRows.has(expense.id);
+
+              return (
+                <Fragment key={expense.id}>
+                  {/* Main Row */}
+                  <tr className="hover:bg-gray-50">
+                    <td className="px-4 py-4">
+                      <button
+                        onClick={() => toggleExpand(expense.id)}
+                        className="text-gray-400 hover:text-gray-600 transition-transform"
+                        style={{ transform: isExpanded ? 'rotate(90deg)' : 'rotate(0deg)' }}
+                      >
+                        ▶
+                      </button>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">{expense.provider_name || 'Not assigned'}</div>
+                      {expense.provider_id && <div className="text-xs font-mono text-gray-500">Provider #{expense.provider_id}</div>}
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="text-sm font-medium text-gray-900">{expense.expense_name}</div>
+                      {expense.description && (
+                        <div className="text-xs text-gray-500 truncate max-w-xs">{expense.description}</div>
+                      )}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{expense.expense_category}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{expense.city}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm font-medium text-gray-900">
+                        {formatPrice(expense.unit_price, expense.currency)}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="text-sm text-gray-900">{expense.unit_type}</div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <span className={`px-2 py-1 text-xs rounded-full font-medium ${getStatusColor(expense.status)}`}>
+                        {expense.status}
+                      </span>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => onView(expense)}
+                          className="text-primary-600 hover:text-primary-900 px-3 py-1 rounded hover:bg-primary-50 transition-colors"
+                        >
+                          View
+                        </button>
+                        <button
+                          onClick={() => onEdit(expense)}
+                          className="text-blue-600 hover:text-blue-900 px-3 py-1 rounded hover:bg-blue-50 transition-colors"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={() => onDelete(expense)}
+                          className="text-red-600 hover:text-red-900 px-3 py-1 rounded hover:bg-red-50 transition-colors"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+
+                  {/* Expandable Details Row */}
+                  {isExpanded && (
+                    <tr>
+                      <td colSpan={9} className="px-6 py-4 bg-gray-50">
+                        <div className="grid grid-cols-2 gap-4">
+                          {/* Pricing Information Table */}
+                          <div>
+                            <h4 className="text-sm font-semibold text-gray-700 mb-2 bg-blue-50 px-3 py-1 rounded">
+                              Pricing Information
+                            </h4>
+                            <table className="min-w-full text-sm">
+                              <tbody className="divide-y divide-gray-200">
+                                <tr>
+                                  <td className="py-2 font-medium text-gray-600">Unit Price</td>
+                                  <td className="py-2 text-gray-900">{formatPrice(expense.unit_price, expense.currency)}</td>
+                                </tr>
+                                <tr>
+                                  <td className="py-2 font-medium text-gray-600">Unit Type</td>
+                                  <td className="py-2 text-gray-900">{expense.unit_type}</td>
+                                </tr>
+                                <tr>
+                                  <td className="py-2 font-medium text-gray-600">Currency</td>
+                                  <td className="py-2 text-gray-900">{expense.currency}</td>
+                                </tr>
+                                <tr>
+                                  <td className="py-2 font-medium text-gray-600">Category</td>
+                                  <td className="py-2 text-gray-900">{expense.expense_category}</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+
+                          {/* Expense Information Table */}
+                          <div>
+                            <h4 className="text-sm font-semibold text-gray-700 mb-2 bg-green-50 px-3 py-1 rounded">
+                              Expense Information
+                            </h4>
+                            <table className="min-w-full text-sm">
+                              <tbody className="divide-y divide-gray-200">
+                                {expense.description && (
+                                  <tr>
+                                    <td className="py-2 font-medium text-gray-600">Description</td>
+                                    <td className="py-2 text-gray-900">{expense.description}</td>
+                                  </tr>
+                                )}
+                                <tr>
+                                  <td className="py-2 font-medium text-gray-600">City</td>
+                                  <td className="py-2 text-gray-900">{expense.city}</td>
+                                </tr>
+                                <tr>
+                                  <td className="py-2 font-medium text-gray-600">Created At</td>
+                                  <td className="py-2 text-gray-900">
+                                    {new Date(expense.created_at).toLocaleDateString('en-GB')}
+                                  </td>
+                                </tr>
+                                <tr>
+                                  <td className="py-2 font-medium text-gray-600">Updated At</td>
+                                  <td className="py-2 text-gray-900">
+                                    {new Date(expense.updated_at).toLocaleDateString('en-GB')}
+                                  </td>
+                                </tr>
+                                <tr>
+                                  <td className="py-2 font-medium text-gray-600">Expense ID</td>
+                                  <td className="py-2 text-gray-900">#{expense.id}</td>
+                                </tr>
+                              </tbody>
+                            </table>
+                          </div>
+                        </div>
+                      </td>
+                    </tr>
                   )}
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">{expense.expense_category}</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">{expense.city}</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm font-medium text-gray-900">
-                    {formatPrice(expense.unit_price, expense.currency)}
-                  </div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <div className="text-sm text-gray-900">{expense.unit_type}</div>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap">
-                  <span className={`px-2 py-1 text-xs rounded-full font-medium ${getStatusColor(expense.status)}`}>
-                    {expense.status}
-                  </span>
-                </td>
-                <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                  <div className="flex items-center justify-end gap-2">
-                    <button
-                      onClick={() => onView(expense)}
-                      className="text-primary-600 hover:text-primary-900 px-3 py-1 rounded hover:bg-primary-50 transition-colors"
-                    >
-                      View
-                    </button>
-                    <button
-                      onClick={() => onEdit(expense)}
-                      className="text-blue-600 hover:text-blue-900 px-3 py-1 rounded hover:bg-blue-50 transition-colors"
-                    >
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => onDelete(expense)}
-                      className="text-red-600 hover:text-red-900 px-3 py-1 rounded hover:bg-red-50 transition-colors"
-                    >
-                      Delete
-                    </button>
-                  </div>
-                </td>
-              </tr>
-            ))}
+                </Fragment>
+              );
+            })}
           </tbody>
         </table>
       </div>

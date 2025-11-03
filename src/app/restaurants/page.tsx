@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 import RestaurantFilters from '@/components/restaurants/RestaurantFilters';
 import RestaurantTable from '@/components/restaurants/RestaurantTable';
 import ViewRestaurantModal from '@/components/restaurants/ViewRestaurantModal';
@@ -34,6 +35,7 @@ interface Restaurant {
 }
 
 export default function RestaurantsPage() {
+  const { organizationId } = useAuth();
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
   const [filteredRestaurants, setFilteredRestaurants] = useState<Restaurant[]>([]);
   const [loading, setLoading] = useState(true);
@@ -63,9 +65,14 @@ export default function RestaurantsPage() {
 
   async function fetchRestaurants() {
     try {
-      const res = await fetch('/api/restaurants');
+      const res = await fetch('/api/restaurants?limit=10000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
-      setRestaurants(Array.isArray(data) ? data : []);
+      const restaurantsData = Array.isArray(data.data) ? data.data : [];
+      setRestaurants(restaurantsData);
     } catch (error) {
       console.error('Failed to fetch restaurants:', error);
       setRestaurants([]);
@@ -142,7 +149,10 @@ export default function RestaurantsPage() {
     try {
       const res = await fetch('/api/restaurants', {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': organizationId
+        },
         body: JSON.stringify({ id: selectedRestaurant.id })
       });
 

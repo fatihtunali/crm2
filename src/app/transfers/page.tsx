@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 import TransferFilters from '@/components/transfers/TransferFilters';
 import TransferTable from '@/components/transfers/TransferTable';
 import ViewTransferModal from '@/components/transfers/ViewTransferModal';
@@ -28,11 +29,10 @@ interface Transfer {
   created_by: number | null;
   vehicle_type: string | null;
   capacity: number | null;
-  brand: string | null;
-  model: string | null;
 }
 
 export default function TransfersPage() {
+  const { organizationId } = useAuth();
   const [transfers, setTransfers] = useState<Transfer[]>([]);
   const [filteredTransfers, setFilteredTransfers] = useState<Transfer[]>([]);
   const [loading, setLoading] = useState(true);
@@ -61,10 +61,22 @@ export default function TransfersPage() {
 
   async function fetchTransfers() {
     try {
-      const res = await fetch('/api/transfers');
+      const res = await fetch('/api/transfers?limit=10000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
-      // Ensure data is always an array
-      setTransfers(Array.isArray(data) ? data : []);
+
+      // Handle paged response format and convert Money objects to decimals
+      const transfersData = Array.isArray(data.data) ? data.data : [];
+      const converted = transfersData.map((transfer: any) => ({
+        ...transfer,
+        price_oneway: transfer.price_oneway?.amount_minor ? transfer.price_oneway.amount_minor / 100 : transfer.price_oneway,
+        price_roundtrip: transfer.price_roundtrip?.amount_minor ? transfer.price_roundtrip.amount_minor / 100 : transfer.price_roundtrip
+      }));
+
+      setTransfers(converted);
     } catch (error) {
       console.error('Failed to fetch transfers:', error);
       setTransfers([]);
@@ -131,7 +143,10 @@ export default function TransfersPage() {
     try {
       const res = await fetch('/api/transfers', {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': organizationId
+        },
         body: JSON.stringify({ id: selectedTransfer.id })
       });
 

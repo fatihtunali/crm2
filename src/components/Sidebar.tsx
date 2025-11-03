@@ -16,7 +16,7 @@ const navigation = [
     icon: '🏨',
     subItems: [
       { name: 'Hotels', href: '/hotels', icon: '🏨' },
-      { name: 'Daily Tours', href: '/tour-packages', icon: '🗺️' },
+      { name: 'Daily Tours', href: '/daily-tours', icon: '🗺️' },
       { name: 'Transfers', href: '/transfers', icon: '🚗' },
       { name: 'Vehicles', href: '/vehicles', icon: '🚙' },
       { name: 'Guides', href: '/guides', icon: '👨‍🏫' },

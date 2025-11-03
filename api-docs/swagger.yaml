@@ -22,11 +22,16 @@ servers:
   - url: https://your-production-domain.com
     description: Production server
 
+security:
+  - bearerAuth: []
+
 tags:
   - name: Suppliers
     description: Manage all supplier types (hotels, guides, vehicles, etc.)
   - name: Quotations
     description: Create and manage travel quotations
+  - name: Bookings
+    description: Manage confirmed bookings from accepted quotations
   - name: Invoices
     description: Handle receivable and payable invoices
   - name: Finance
@@ -37,9 +42,143 @@ tags:
     description: Manage provider/company information
 
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: JWT token for authentication
+
+  parameters:
+    Page:
+      in: query
+      name: page
+      description: Page number for pagination
+      schema:
+        type: integer
+        minimum: 1
+        default: 1
+    PageSize:
+      in: query
+      name: page_size
+      description: Number of items per page
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 200
+        default: 25
+    Sort:
+      in: query
+      name: sort
+      description: Comma-separated list of fields to sort by. Prefix with '-' for descending order.
+      schema:
+        type: string
+        example: "-created_at,name"
+    Search:
+      in: query
+      name: search
+      description: Search query string
+      schema:
+        type: string
+    StatusFilter:
+      in: query
+      name: status
+      description: Filter by status
+      schema:
+        type: string
+        enum: [all, active, inactive]
+
+  headers:
+    IdempotencyKey:
+      description: Idempotency key for safely retrying POST/PUT/PATCH operations
+      schema:
+        type: string
+        format: uuid
+    XTenantId:
+      description: Tenant ID for multi-tenancy support
+      schema:
+        type: string
+
   schemas:
+    Problem:
+      type: object
+      description: RFC 7807 Problem Details for HTTP APIs
+      required:
+        - type
+        - title
+        - status
+      properties:
+        type:
+          type: string
+          format: uri
+          description: A URI reference that identifies the problem type
+          example: "https://api.example.com/problems/validation-error"
+        title:
+          type: string
+          description: A short, human-readable summary of the problem
+          example: "Validation Error"
+        status:
+          type: integer
+          description: The HTTP status code
+          example: 400
+        detail:
+          type: string
+          description: A human-readable explanation specific to this occurrence
+          example: "The 'hotel_name' field is required"
+        instance:
+          type: string
+          format: uri
+          description: A URI reference that identifies the specific occurrence
+          example: "/api/hotels"
+
+    Money:
+      type: object
+      description: Monetary amount represented in minor units (cents, kuruş, etc.)
+      required:
+        - amount_minor
+        - currency
+      properties:
+        amount_minor:
+          type: integer
+          description: Amount in minor units (e.g., cents for USD, kuruş for TRY)
+          example: 15000
+        currency:
+          type: string
+          description: ISO 4217 currency code
+          example: "EUR"
+          pattern: "^[A-Z]{3}$"
+
+    PageMeta:
+      type: object
+      description: Pagination metadata
+      properties:
+        page:
+          type: integer
+          description: Current page number
+          example: 1
+        page_size:
+          type: integer
+          description: Number of items per page
+          example: 25
+        total:
+          type: integer
+          description: Total number of items
+          example: 100
+
+    PagedResponse:
+      type: object
+      description: Generic paged response wrapper
+      properties:
+        data:
+          type: array
+          items: {}
+        meta:
+          $ref: '#/components/schemas/PageMeta'
+
     Error:
       type: object
+      deprecated: true
+      description: "Deprecated: Use Problem schema instead"
       properties:
         error:
           type: string
@@ -51,6 +190,10 @@ components:
         id:
           type: integer
           format: int64
+        organization_id:
+          type: integer
+          format: int64
+          description: Organization this provider belongs to
         provider_name:
           type: string
         provider_type:
@@ -63,6 +206,12 @@ components:
         status:
           type: string
           enum: [active, inactive]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     Hotel:
       type: object
@@ -70,6 +219,10 @@ components:
         id:
           type: integer
           format: int64
+        organization_id:
+          type: integer
+          format: int64
+          description: Organization this hotel belongs to
         provider_id:
           type: integer
           format: int64
@@ -89,6 +242,12 @@ components:
         status:
           type: string
           enum: [active, inactive]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     Guide:
       type: object
@@ -116,6 +275,12 @@ components:
         status:
           type: string
           enum: [active, inactive]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     Vehicle:
       type: object
@@ -145,6 +310,12 @@ components:
         status:
           type: string
           enum: [active, inactive]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     TourPackage:
       type: object
@@ -152,6 +323,10 @@ components:
         id:
           type: integer
           format: int64
+        organization_id:
+          type: integer
+          format: int64
+          description: Organization this tour package belongs to
         provider_id:
           type: integer
           format: int64
@@ -172,6 +347,12 @@ components:
         status:
           type: string
           enum: [active, inactive]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     Restaurant:
       type: object
@@ -179,6 +360,10 @@ components:
         id:
           type: integer
           format: int64
+        organization_id:
+          type: integer
+          format: int64
+          description: Organization this restaurant belongs to
         provider_id:
           type: integer
           format: int64
@@ -195,6 +380,12 @@ components:
         status:
           type: string
           enum: [active, inactive]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     Transfer:
       type: object
@@ -222,14 +413,18 @@ components:
         season_name:
           type: string
         price_oneway:
-          type: number
-          format: decimal
+          $ref: '#/components/schemas/Money'
         price_roundtrip:
-          type: number
-          format: decimal
+          $ref: '#/components/schemas/Money'
         status:
           type: string
           enum: [active, inactive]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     ExtraExpense:
       type: object
@@ -253,16 +448,19 @@ components:
           type: string
         city:
           type: string
-        currency:
-          type: string
         unit_price:
-          type: number
-          format: decimal
+          $ref: '#/components/schemas/Money'
         unit_type:
           type: string
         status:
           type: string
           enum: [active, inactive]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     EntranceFee:
       type: object
@@ -270,6 +468,10 @@ components:
         id:
           type: integer
           format: int64
+        organization_id:
+          type: integer
+          format: int64
+          description: Organization this entrance fee belongs to
         provider_id:
           type: integer
           format: int64
@@ -289,6 +491,12 @@ components:
         status:
           type: string
           enum: [active, inactive]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     Quotation:
       type: object
@@ -296,6 +504,10 @@ components:
         id:
           type: integer
           format: int64
+        organization_id:
+          type: integer
+          format: int64
+          description: Organization this quotation belongs to
         request_id:
           type: integer
           format: int64
@@ -311,13 +523,16 @@ components:
           type: string
           format: date
         total_price:
-          type: number
-          format: decimal
-        currency:
-          type: string
+          $ref: '#/components/schemas/Money'
         status:
           type: string
           enum: [draft, sent, accepted, rejected]
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
     Invoice:
       type: object
@@ -325,6 +540,10 @@ components:
         id:
           type: integer
           format: int64
+        organization_id:
+          type: integer
+          format: int64
+          description: Organization this invoice belongs to
         quotation_id:
           type: integer
           format: int64
@@ -334,10 +553,7 @@ components:
         invoice_number:
           type: string
         amount:
-          type: number
-          format: decimal
-        currency:
-          type: string
+          $ref: '#/components/schemas/Money'
         status:
           type: string
           enum: [pending, paid, overdue, cancelled]
@@ -348,44 +564,332 @@ components:
           type: string
           format: date
           nullable: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    QuotationItem:
+      type: object
+      description: Line item in a quotation representing a supplier service
+      required:
+        - supplier_type
+        - supplier_id
+        - qty
+        - unit_price
+      properties:
+        id:
+          type: integer
+          format: int64
+        quotation_id:
+          type: integer
+          format: int64
+        supplier_type:
+          type: string
+          enum: [hotel, transfer, guide, restaurant, entrance_fee, extra_expense, tour_package]
+          description: Type of supplier service
+        supplier_id:
+          type: integer
+          format: int64
+          description: ID of the specific supplier
+        date:
+          type: string
+          format: date
+          nullable: true
+          description: Date this service is scheduled for
+        qty:
+          type: number
+          description: Quantity of this service
+          example: 2
+        unit_price:
+          $ref: '#/components/schemas/Money'
+        notes:
+          type: string
+          nullable: true
+          description: Additional notes for this item
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Booking:
+      type: object
+      description: Confirmed booking created from an accepted quotation
+      properties:
+        id:
+          type: integer
+          format: int64
+        organization_id:
+          type: integer
+          format: int64
+          description: Organization this booking belongs to
+        quotation_id:
+          type: integer
+          format: int64
+          description: Reference to the accepted quotation
+        locked_exchange_rate:
+          type: number
+          format: decimal
+          description: Exchange rate locked at booking confirmation (e.g., TRY per EUR)
+          example: 35.50
+        currency:
+          type: string
+          description: Base currency for this booking
+          example: "EUR"
+        status:
+          type: string
+          enum: [confirmed, cancelled]
+          description: Current booking status
+        created_at:
+          type: string
+          format: date-time
+          description: Timestamp when booking was confirmed
+        updated_at:
+          type: string
+          format: date-time
+
+    ExchangeRate:
+      type: object
+      description: Currency exchange rate snapshot
+      required:
+        - from_currency
+        - to_currency
+        - rate
+        - effective_date
+      properties:
+        id:
+          type: integer
+          format: int64
+        from_currency:
+          type: string
+          description: ISO 4217 source currency code
+          example: "TRY"
+          pattern: "^[A-Z]{3}$"
+        to_currency:
+          type: string
+          description: ISO 4217 target currency code
+          example: "EUR"
+          pattern: "^[A-Z]{3}$"
+        rate:
+          type: number
+          format: decimal
+          description: Exchange rate (1 from_currency = rate * to_currency)
+          example: 0.028
+        effective_date:
+          type: string
+          format: date-time
+          description: When this rate becomes effective
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
 
 paths:
   /api/providers:
     get:
       tags:
         - Providers
-      summary: Get all active providers
-      description: Retrieve list of all active providers/companies
+      summary: List all providers
+      description: Retrieve paginated list of providers/companies
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/StatusFilter'
       responses:
         '200':
           description: Successful response
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Provider'
-        '500':
-          description: Server error
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Provider'
+        '400':
+          description: Bad request
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Error'
+                $ref: '#/components/schemas/Problem'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    post:
+      tags:
+        - Providers
+      summary: Create new provider
+      description: Create a new provider/company
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            $ref: '#/components/headers/IdempotencyKey/schema'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - provider_name
+                - provider_type
+              properties:
+                provider_name:
+                  type: string
+                provider_type:
+                  type: string
+                contact_email:
+                  type: string
+                  format: email
+                contact_phone:
+                  type: string
+      responses:
+        '201':
+          description: Provider created successfully
+          headers:
+            Location:
+              description: URL of the created provider
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Provider'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /api/providers/{id}:
+    get:
+      tags:
+        - Providers
+      summary: Get provider by ID
+      description: Retrieve a specific provider by its ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Provider'
+        '404':
+          description: Provider not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    patch:
+      tags:
+        - Providers
+      summary: Update provider
+      description: Partially update a provider
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                provider_name:
+                  type: string
+                provider_type:
+                  type: string
+                contact_email:
+                  type: string
+                  format: email
+                contact_phone:
+                  type: string
+                status:
+                  type: string
+                  enum: [active, inactive]
+      responses:
+        '200':
+          description: Provider updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Provider'
+        '404':
+          description: Provider not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    delete:
+      tags:
+        - Providers
+      summary: Archive provider
+      description: Soft delete a provider (set status to inactive)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '204':
+          description: Provider archived successfully
+        '404':
+          description: Provider not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
   /api/hotels:
     get:
       tags:
         - Suppliers
-      summary: Get all hotels
-      description: Retrieve hotels with optional filtering
+      summary: List all hotels
+      description: Retrieve paginated list of hotels with optional filtering
       parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
-            enum: [all, active, inactive]
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/StatusFilter'
         - name: city
           in: query
+          description: Filter by city
           schema:
             type: string
       responses:
@@ -394,13 +898,30 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Hotel'
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Hotel'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
     post:
       tags:
         - Suppliers
       summary: Create new hotel
+      description: Add a new hotel to the system
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            $ref: '#/components/headers/IdempotencyKey/schema'
       requestBody:
         required: true
         content:
@@ -411,6 +932,10 @@ paths:
                 - hotel_name
                 - city
               properties:
+                provider_id:
+                  type: integer
+                  format: int64
+                  nullable: true
                 hotel_name:
                   type: string
                 city:
@@ -419,74 +944,140 @@ paths:
                   type: string
                 rating:
                   type: number
+                  format: float
       responses:
-        '200':
+        '201':
           description: Hotel created successfully
+          headers:
+            Location:
+              description: URL of the created hotel
+              schema:
+                type: string
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  success:
-                    type: boolean
-                  id:
-                    type: integer
-    put:
+                $ref: '#/components/schemas/Hotel'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+        '422':
+          description: Validation error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /api/hotels/{id}:
+    get:
+      tags:
+        - Suppliers
+      summary: Get hotel by ID
+      description: Retrieve a specific hotel by its ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hotel'
+        '404':
+          description: Hotel not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    patch:
       tags:
         - Suppliers
       summary: Update hotel
+      description: Partially update a hotel
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required:
-                - id
               properties:
-                id:
-                  type: integer
                 provider_id:
                   type: integer
+                  format: int64
                   nullable: true
                 hotel_name:
                   type: string
                 city:
                   type: string
+                google_place_id:
+                  type: string
+                rating:
+                  type: number
+                  format: float
                 status:
                   type: string
+                  enum: [active, inactive]
       responses:
         '200':
           description: Hotel updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Hotel'
+        '404':
+          description: Hotel not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
     delete:
       tags:
         - Suppliers
-      summary: Archive hotel (soft delete)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - id
-              properties:
-                id:
-                  type: integer
+      summary: Archive hotel
+      description: Soft delete a hotel (set status to inactive)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            format: int64
       responses:
-        '200':
+        '204':
           description: Hotel archived successfully
+        '404':
+          description: Hotel not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
   /api/guides:
     get:
       tags:
         - Suppliers
-      summary: Get all guides
+      summary: List all guides
+      description: Retrieve paginated list of guides with optional filtering
       parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/StatusFilter'
         - name: city
           in: query
           schema:
@@ -501,39 +1092,82 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Guide'
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Guide'
     post:
       tags:
         - Suppliers
       summary: Create new guide
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            $ref: '#/components/headers/IdempotencyKey/schema'
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/Guide'
+              type: object
+              required:
+                - city
+                - language
+              properties:
+                provider_id:
+                  type: integer
+                  format: int64
+                city:
+                  type: string
+                language:
+                  type: string
+                description:
+                  type: string
+      responses:
+        '201':
+          description: Guide created successfully
+          headers:
+            Location:
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Guide'
+
+  /api/guides/{id}:
+    get:
+      tags:
+        - Suppliers
+      summary: Get guide by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
         '200':
-          description: Guide created successfully
-    put:
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Guide'
+    patch:
       tags:
         - Suppliers
       summary: Update guide
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/Guide'
-      responses:
-        '200':
-          description: Guide updated successfully
-    delete:
-      tags:
-        - Suppliers
-      summary: Archive guide
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       requestBody:
         required: true
         content:
@@ -541,22 +1175,49 @@ paths:
             schema:
               type: object
               properties:
-                id:
+                provider_id:
                   type: integer
+                city:
+                  type: string
+                language:
+                  type: string
+                description:
+                  type: string
+                status:
+                  type: string
+                  enum: [active, inactive]
       responses:
         '200':
+          description: Guide updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Guide'
+    delete:
+      tags:
+        - Suppliers
+      summary: Archive guide
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '204':
           description: Guide archived successfully
 
   /api/vehicles:
     get:
       tags:
         - Suppliers
-      summary: Get all vehicles
+      summary: List all vehicles
       parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/StatusFilter'
         - name: city
           in: query
           schema:
@@ -567,41 +1228,91 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Vehicle'
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Vehicle'
     post:
       tags:
         - Suppliers
       summary: Create new vehicle
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            $ref: '#/components/headers/IdempotencyKey/schema'
+      responses:
+        '201':
+          description: Vehicle created successfully
+          headers:
+            Location:
+              schema:
+                type: string
+
+  /api/vehicles/{id}:
+    get:
+      tags:
+        - Suppliers
+      summary: Get vehicle by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
         '200':
-          description: Vehicle created successfully
-    put:
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vehicle'
+    patch:
       tags:
         - Suppliers
       summary: Update vehicle
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
         '200':
           description: Vehicle updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Vehicle'
     delete:
       tags:
         - Suppliers
       summary: Archive vehicle
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
-        '200':
+        '204':
           description: Vehicle archived successfully
 
   /api/tour-packages:
     get:
       tags:
         - Suppliers
-      summary: Get all tour packages
+      summary: List all tour packages
       parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/StatusFilter'
         - name: tour_type
           in: query
           schema:
@@ -616,41 +1327,91 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/TourPackage'
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/TourPackage'
     post:
       tags:
         - Suppliers
       summary: Create new tour package
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            $ref: '#/components/headers/IdempotencyKey/schema'
+      responses:
+        '201':
+          description: Tour package created
+          headers:
+            Location:
+              schema:
+                type: string
+
+  /api/tour-packages/{id}:
+    get:
+      tags:
+        - Suppliers
+      summary: Get tour package by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
         '200':
-          description: Tour package created
-    put:
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TourPackage'
+    patch:
       tags:
         - Suppliers
       summary: Update tour package
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
         '200':
           description: Tour package updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TourPackage'
     delete:
       tags:
         - Suppliers
       summary: Archive tour package
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
-        '200':
+        '204':
           description: Tour package archived
 
   /api/restaurants:
     get:
       tags:
         - Suppliers
-      summary: Get all restaurants
+      summary: List all restaurants
       parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/StatusFilter'
         - name: city
           in: query
           schema:
@@ -665,41 +1426,91 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Restaurant'
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Restaurant'
     post:
       tags:
         - Suppliers
       summary: Create new restaurant
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            $ref: '#/components/headers/IdempotencyKey/schema'
+      responses:
+        '201':
+          description: Restaurant created
+          headers:
+            Location:
+              schema:
+                type: string
+
+  /api/restaurants/{id}:
+    get:
+      tags:
+        - Suppliers
+      summary: Get restaurant by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
         '200':
-          description: Restaurant created
-    put:
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Restaurant'
+    patch:
       tags:
         - Suppliers
       summary: Update restaurant
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
         '200':
           description: Restaurant updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Restaurant'
     delete:
       tags:
         - Suppliers
       summary: Archive restaurant
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
-        '200':
+        '204':
           description: Restaurant archived
 
   /api/transfers:
     get:
       tags:
         - Suppliers
-      summary: Get all intercity transfers
+      summary: List all intercity transfers
       parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/StatusFilter'
         - name: from_city
           in: query
           schema:
@@ -708,51 +1519,97 @@ paths:
           in: query
           schema:
             type: string
-        - name: search
-          in: query
-          schema:
-            type: string
       responses:
         '200':
           description: Successful response
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Transfer'
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Transfer'
     post:
       tags:
         - Suppliers
       summary: Create new transfer
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            $ref: '#/components/headers/IdempotencyKey/schema'
+      responses:
+        '201':
+          description: Transfer created
+          headers:
+            Location:
+              schema:
+                type: string
+
+  /api/transfers/{id}:
+    get:
+      tags:
+        - Suppliers
+      summary: Get transfer by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
         '200':
-          description: Transfer created
-    put:
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
+    patch:
       tags:
         - Suppliers
       summary: Update transfer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
         '200':
           description: Transfer updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Transfer'
     delete:
       tags:
         - Suppliers
       summary: Archive transfer
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
-        '200':
+        '204':
           description: Transfer archived
 
   /api/extra-expenses:
     get:
       tags:
         - Suppliers
-      summary: Get all extra expenses
+      summary: List all extra expenses
       parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/StatusFilter'
         - name: expense_category
           in: query
           schema:
@@ -761,51 +1618,97 @@ paths:
           in: query
           schema:
             type: string
-        - name: search
-          in: query
-          schema:
-            type: string
       responses:
         '200':
           description: Successful response
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/ExtraExpense'
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ExtraExpense'
     post:
       tags:
         - Suppliers
       summary: Create new extra expense
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            $ref: '#/components/headers/IdempotencyKey/schema'
+      responses:
+        '201':
+          description: Extra expense created
+          headers:
+            Location:
+              schema:
+                type: string
+
+  /api/extra-expenses/{id}:
+    get:
+      tags:
+        - Suppliers
+      summary: Get extra expense by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
         '200':
-          description: Extra expense created
-    put:
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtraExpense'
+    patch:
       tags:
         - Suppliers
       summary: Update extra expense
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
         '200':
           description: Extra expense updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExtraExpense'
     delete:
       tags:
         - Suppliers
       summary: Archive extra expense
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
-        '200':
+        '204':
           description: Extra expense archived
 
   /api/entrance-fees:
     get:
       tags:
         - Suppliers
-      summary: Get all entrance fees
+      summary: List all entrance fees
       parameters:
-        - name: status
-          in: query
-          schema:
-            type: string
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Search'
+        - $ref: '#/components/parameters/StatusFilter'
         - name: city
           in: query
           schema:
@@ -816,37 +1719,91 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/EntranceFee'
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/EntranceFee'
     post:
       tags:
         - Suppliers
       summary: Create new entrance fee
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            $ref: '#/components/headers/IdempotencyKey/schema'
+      responses:
+        '201':
+          description: Entrance fee created
+          headers:
+            Location:
+              schema:
+                type: string
+
+  /api/entrance-fees/{id}:
+    get:
+      tags:
+        - Suppliers
+      summary: Get entrance fee by ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
         '200':
-          description: Entrance fee created
-    put:
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntranceFee'
+    patch:
       tags:
         - Suppliers
       summary: Update entrance fee
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
         '200':
           description: Entrance fee updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EntranceFee'
     delete:
       tags:
         - Suppliers
       summary: Archive entrance fee
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
       responses:
-        '200':
+        '204':
           description: Entrance fee archived
 
   /api/quotations:
     get:
       tags:
         - Quotations
-      summary: Get all quotations
+      summary: List all quotations
+      description: Retrieve paginated list of quotations with optional filtering
       parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - $ref: '#/components/parameters/Search'
         - name: status
           in: query
           schema:
@@ -858,19 +1815,35 @@ paths:
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Quotation'
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Quotation'
     post:
       tags:
         - Quotations
       summary: Create new quotation
+      description: Create a new quotation with line items
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            $ref: '#/components/headers/IdempotencyKey/schema'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required:
+                - customer_name
+                - customer_email
+                - start_date
+                - end_date
               properties:
                 request_id:
                   type: integer
@@ -878,21 +1851,36 @@ paths:
                   type: string
                 customer_email:
                   type: string
+                  format: email
                 start_date:
                   type: string
                   format: date
                 end_date:
                   type: string
                   format: date
+                items:
+                  type: array
+                  items:
+                    $ref: '#/components/schemas/QuotationItem'
       responses:
-        '200':
+        '201':
           description: Quotation created successfully
+          headers:
+            Location:
+              description: URL of the created quotation
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quotation'
 
   /api/quotations/{id}:
     get:
       tags:
         - Quotations
       summary: Get quotation by ID
+      description: Retrieve a specific quotation with all its details
       parameters:
         - name: id
           in: path
@@ -906,25 +1894,54 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Quotation'
-    put:
+        '404':
+          description: Quotation not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    patch:
       tags:
         - Quotations
       summary: Update quotation
+      description: Partially update a quotation
       parameters:
         - name: id
           in: path
           required: true
           schema:
             type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                customer_name:
+                  type: string
+                customer_email:
+                  type: string
+                start_date:
+                  type: string
+                  format: date
+                end_date:
+                  type: string
+                  format: date
       responses:
         '200':
-          description: Quotation updated
+          description: Quotation updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quotation'
 
   /api/quotations/{id}/generate-itinerary:
     post:
       tags:
         - Quotations
       summary: Generate AI itinerary for quotation
+      description: Use AI to generate a detailed itinerary based on quotation details
       parameters:
         - name: id
           in: path
@@ -934,12 +1951,142 @@ paths:
       responses:
         '200':
           description: Itinerary generated successfully
+        '202':
+          description: Itinerary generation accepted (async processing)
 
   /api/quotations/{id}/status:
-    put:
+    patch:
       tags:
         - Quotations
       summary: Update quotation status
+      description: Change the status of a quotation (draft -> sent -> accepted/rejected)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - status
+              properties:
+                status:
+                  type: string
+                  enum: [draft, sent, accepted, rejected]
+      responses:
+        '200':
+          description: Status updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Quotation'
+
+  /api/bookings:
+    get:
+      tags:
+        - Bookings
+      summary: List all bookings
+      description: Retrieve paginated list of confirmed bookings
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [all, confirmed, cancelled]
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Booking'
+    post:
+      tags:
+        - Bookings
+      summary: Create booking from quotation
+      description: Create a confirmed booking from an accepted quotation, locking in the current exchange rate
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            $ref: '#/components/headers/IdempotencyKey/schema'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - quotation_id
+              properties:
+                quotation_id:
+                  type: integer
+                  format: int64
+                  description: ID of the accepted quotation to convert to booking
+      responses:
+        '201':
+          description: Booking created successfully
+          headers:
+            Location:
+              description: URL of the created booking
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+        '400':
+          description: Invalid quotation or quotation not in accepted status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /api/bookings/{id}:
+    get:
+      tags:
+        - Bookings
+      summary: Get booking by ID
+      description: Retrieve a specific booking by its ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
+        '404':
+          description: Booking not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+    patch:
+      tags:
+        - Bookings
+      summary: Update booking
+      description: Update booking details (limited fields after confirmation)
       parameters:
         - name: id
           in: path
@@ -955,36 +2102,174 @@ paths:
               properties:
                 status:
                   type: string
-                  enum: [draft, sent, accepted, rejected]
+                  enum: [confirmed, cancelled]
       responses:
         '200':
-          description: Status updated successfully
+          description: Booking updated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Booking'
 
-  /api/invoices/receivable:
+  /api/finance/exchange-rates:
     get:
       tags:
-        - Invoices
-      summary: Get all receivable invoices
+        - Finance
+      summary: List exchange rates
+      description: Retrieve paginated list of currency exchange rates
       parameters:
-        - name: status
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - name: from_currency
           in: query
+          description: Filter by source currency (ISO 4217)
           schema:
             type: string
+            example: "TRY"
+        - name: to_currency
+          in: query
+          description: Filter by target currency (ISO 4217)
+          schema:
+            type: string
+            example: "EUR"
       responses:
         '200':
           description: Successful response
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/Invoice'
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/ExchangeRate'
+    post:
+      tags:
+        - Finance
+      summary: Create or update exchange rate
+      description: Add a new exchange rate or update an existing one for a currency pair
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            $ref: '#/components/headers/IdempotencyKey/schema'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - from_currency
+                - to_currency
+                - rate
+                - effective_date
+              properties:
+                from_currency:
+                  type: string
+                  description: ISO 4217 source currency code
+                  example: "TRY"
+                to_currency:
+                  type: string
+                  description: ISO 4217 target currency code
+                  example: "EUR"
+                rate:
+                  type: number
+                  format: decimal
+                  description: Exchange rate
+                  example: 0.028
+                effective_date:
+                  type: string
+                  format: date-time
+                  description: When this rate becomes effective
+      responses:
+        '201':
+          description: Exchange rate created successfully
+          headers:
+            Location:
+              description: URL of the created exchange rate
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExchangeRate'
+
+  /api/finance/exchange-rates/latest:
+    get:
+      tags:
+        - Finance
+      summary: Get latest exchange rate
+      description: Retrieve the most recent exchange rate for a currency pair
+      parameters:
+        - name: from_currency
+          in: query
+          required: true
+          description: Source currency (ISO 4217)
+          schema:
+            type: string
+            example: "TRY"
+        - name: to_currency
+          in: query
+          required: true
+          description: Target currency (ISO 4217)
+          schema:
+            type: string
+            example: "EUR"
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ExchangeRate'
+        '404':
+          description: No exchange rate found for this currency pair
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+
+  /api/invoices/receivable:
+    get:
+      tags:
+        - Invoices
+      summary: List all receivable invoices
+      description: Retrieve paginated list of receivable (customer) invoices
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [all, pending, paid, overdue, cancelled]
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Invoice'
 
   /api/invoices/receivable/{id}:
     get:
       tags:
         - Invoices
       summary: Get receivable invoice by ID
+      description: Retrieve a specific receivable invoice
       parameters:
         - name: id
           in: path
@@ -994,53 +2279,104 @@ paths:
       responses:
         '200':
           description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invoice'
+        '404':
+          description: Invoice not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
   /api/invoices/receivable/{id}/payment:
-    put:
+    post:
       tags:
         - Invoices
       summary: Record payment for receivable invoice
+      description: Record a payment received from a customer
       parameters:
         - name: id
           in: path
           required: true
           schema:
             type: integer
+        - in: header
+          name: Idempotency-Key
+          schema:
+            $ref: '#/components/headers/IdempotencyKey/schema'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required:
+                - amount
+                - paid_date
               properties:
-                paid_amount:
-                  type: number
+                amount:
+                  $ref: '#/components/schemas/Money'
                 paid_date:
                   type: string
                   format: date
+                payment_method:
+                  type: string
+                  enum: [bank_transfer, card, cash, check]
+                reference:
+                  type: string
+                  description: Payment reference number
       responses:
-        '200':
+        '201':
           description: Payment recorded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invoice'
+        '409':
+          description: Overpayment or invoice already closed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
   /api/invoices/payable:
     get:
       tags:
         - Invoices
-      summary: Get all payable invoices
+      summary: List all payable invoices
+      description: Retrieve paginated list of payable (supplier) invoices
       parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
         - name: status
           in: query
           schema:
             type: string
+            enum: [all, pending, paid, overdue, cancelled]
       responses:
         '200':
           description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          $ref: '#/components/schemas/Invoice'
 
   /api/invoices/payable/{id}:
     get:
       tags:
         - Invoices
       summary: Get payable invoice by ID
+      description: Retrieve a specific payable invoice
       parameters:
         - name: id
           in: path
@@ -1050,46 +2386,118 @@ paths:
       responses:
         '200':
           description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invoice'
+        '404':
+          description: Invoice not found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Problem'
 
   /api/invoices/payable/{id}/payment:
-    put:
+    post:
       tags:
         - Invoices
       summary: Record payment for payable invoice
+      description: Record a payment made to a supplier
       parameters:
         - name: id
           in: path
           required: true
           schema:
             type: integer
-      responses:
-        '200':
-          description: Payment recorded
-
-  /api/invoices/generate:
-    post:
-      tags:
-        - Invoices
-      summary: Generate invoices for quotation
+        - in: header
+          name: Idempotency-Key
+          schema:
+            $ref: '#/components/headers/IdempotencyKey/schema'
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
+              required:
+                - amount
+                - paid_date
               properties:
-                quotation_id:
-                  type: integer
+                amount:
+                  $ref: '#/components/schemas/Money'
+                paid_date:
+                  type: string
+                  format: date
+                payment_method:
+                  type: string
+                  enum: [bank_transfer, card, cash, check]
+                reference:
+                  type: string
       responses:
-        '200':
+        '201':
+          description: Payment recorded successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Invoice'
+
+  /api/invoices/generate:
+    post:
+      tags:
+        - Invoices
+      summary: Generate invoices for booking
+      description: Automatically generate receivable and payable invoices from a confirmed booking
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          schema:
+            $ref: '#/components/headers/IdempotencyKey/schema'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - booking_id
+              properties:
+                booking_id:
+                  type: integer
+                  description: ID of the confirmed booking
+      responses:
+        '201':
           description: Invoices generated successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  receivable_invoice_id:
+                    type: integer
+                  payable_invoice_ids:
+                    type: array
+                    items:
+                      type: integer
 
   /api/finance/summary:
     get:
       tags:
         - Finance
       summary: Get financial summary
-      description: Revenue, expenses, and profit metrics
+      description: Revenue, expenses, and profit metrics using locked exchange rates
+      parameters:
+        - name: start_date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: Start date for the summary period
+        - name: end_date
+          in: query
+          schema:
+            type: string
+            format: date
+          description: End date for the summary period
       responses:
         '200':
           description: Successful response
@@ -1099,31 +2507,85 @@ paths:
                 type: object
                 properties:
                   total_revenue:
-                    type: number
+                    $ref: '#/components/schemas/Money'
                   total_expenses:
-                    type: number
+                    $ref: '#/components/schemas/Money'
                   net_profit:
-                    type: number
-                  currency:
+                    $ref: '#/components/schemas/Money'
+                  period_start:
                     type: string
+                    format: date
+                  period_end:
+                    type: string
+                    format: date
 
   /api/finance/customers:
     get:
       tags:
         - Finance
       summary: Get customer financial data
+      description: Financial breakdown by customer with pagination
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
       responses:
         '200':
           description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            customer_name:
+                              type: string
+                            total_bookings:
+                              type: integer
+                            total_revenue:
+                              $ref: '#/components/schemas/Money'
+                            outstanding_balance:
+                              $ref: '#/components/schemas/Money'
 
   /api/finance/suppliers:
     get:
       tags:
         - Finance
       summary: Get supplier financial data
+      description: Financial breakdown by supplier with pagination
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - $ref: '#/components/parameters/Sort'
       responses:
         '200':
           description: Successful response
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            provider_name:
+                              type: string
+                            total_services:
+                              type: integer
+                            total_expenses:
+                              $ref: '#/components/schemas/Money'
+                            outstanding_balance:
+                              $ref: '#/components/schemas/Money'
 
   /api/dashboard/stats:
     get:
@@ -1168,18 +2630,47 @@ paths:
       tags:
         - Suppliers
       summary: Search across all supplier types
+      description: Federated search across hotels, guides, vehicles, restaurants, tour packages, entrance fees, transfers, and extra expenses
       parameters:
         - name: query
           in: query
           required: true
+          description: Search term to match against supplier names and descriptions
           schema:
             type: string
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/PageSize'
+        - name: type
+          in: query
+          description: Filter by specific supplier type
+          schema:
+            type: string
+            enum: [hotel, guide, vehicle, restaurant, tour_package, entrance_fee, transfer, extra_expense]
       responses:
         '200':
-          description: Successful response
+          description: Successful response with mixed supplier types
           content:
             application/json:
               schema:
-                type: array
-                items:
-                  type: object
+                allOf:
+                  - $ref: '#/components/schemas/PagedResponse'
+                  - type: object
+                    properties:
+                      data:
+                        type: array
+                        items:
+                          type: object
+                          description: Mixed supplier types with discriminator
+                          properties:
+                            supplier_type:
+                              type: string
+                              enum: [hotel, guide, vehicle, restaurant, tour_package, entrance_fee, transfer, extra_expense]
+                              description: Discriminator to identify the type of supplier
+                            id:
+                              type: integer
+                            name:
+                              type: string
+                              description: Supplier name
+                            city:
+                              type: string
+                              nullable: true

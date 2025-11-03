@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 import GuideFilters from '@/components/guides/GuideFilters';
 import GuideTable from '@/components/guides/GuideTable';
 import ViewGuideModal from '@/components/guides/ViewGuideModal';
@@ -30,6 +31,7 @@ interface Guide {
 }
 
 export default function GuidesPage() {
+  const { organizationId } = useAuth();
   const [guides, setGuides] = useState<Guide[]>([]);
   const [filteredGuides, setFilteredGuides] = useState<Guide[]>([]);
   const [loading, setLoading] = useState(true);
@@ -59,10 +61,16 @@ export default function GuidesPage() {
 
   async function fetchGuides() {
     try {
-      const res = await fetch('/api/guides');
+      const res = await fetch('/api/guides?limit=10000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
-      // Ensure data is always an array
-      setGuides(Array.isArray(data) ? data : []);
+
+      // Handle paged response format
+      const guidesData = Array.isArray(data.data) ? data.data : [];
+      setGuides(guidesData);
     } catch (error) {
       console.error('Failed to fetch guides:', error);
       setGuides([]);
@@ -133,7 +141,10 @@ export default function GuidesPage() {
     try {
       const res = await fetch('/api/guides', {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': organizationId
+        },
         body: JSON.stringify({ id: selectedGuide.id })
       });
 

@@ -1,14 +1,70 @@
-import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 import { query } from '@/lib/db';
+import { parsePaginationParams, parseSortParams, buildPagedResponse } from '@/lib/pagination';
+import { buildWhereClause, buildSearchClause, combineWhereAndSearch } from '@/lib/query-builder';
+import { successResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
+import { requireTenant } from '@/middleware/tenancy';
+import { createMoney } from '@/lib/money';
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const status = searchParams.get('status');
+    // Require tenant
+    const tenantResult = requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { tenantId } = tenantResult;
 
+    const { searchParams } = new URL(request.url);
+
+    // Parse pagination parameters
+    const { page, pageSize, offset } = parsePaginationParams(searchParams);
+
+    // Parse sort parameters (default: -created_at)
+    const sortParam = searchParams.get('sort') || '-created_at';
+    const orderBy = parseSortParams(sortParam);
+
+    // Build filters
+    const filters: Record<string, any> = {};
+
+    const statusFilter = searchParams.get('status');
+    if (statusFilter && statusFilter !== 'all') {
+      filters.status = statusFilter;
+    }
+
+    const tourTypeFilter = searchParams.get('tour_type');
+    if (tourTypeFilter && tourTypeFilter !== 'all') {
+      filters.tour_type = tourTypeFilter;
+    }
+
+    const hotelCategoryFilter = searchParams.get('hotel_category');
+    if (hotelCategoryFilter && hotelCategoryFilter !== 'all') {
+      filters.hotel_category = hotelCategoryFilter;
+    }
+
+    const sourceFilter = searchParams.get('source');
+    if (sourceFilter && sourceFilter !== 'all') {
+      filters.source = sourceFilter;
+    }
+
+    // Add tenant filter
+    filters.organization_id = parseInt(tenantId);
+
+    // Build where clause
+    const whereClause = buildWhereClause(filters);
+
+    // Build search clause (search in customer_name, customer_email, destination)
+    const searchTerm = searchParams.get('search');
+    const searchClause = buildSearchClause(searchTerm || '', ['customer_name', 'customer_email', 'destination']);
+
+    // Combine where and search
+    const combined = combineWhereAndSearch(whereClause, searchClause);
+
+    // Build main query
     let sql = `
       SELECT
         id,
+        uuid,
         customer_name,
         customer_email,
         customer_phone,
@@ -23,30 +79,82 @@ export async function GET(request: Request) {
         tour_type,
         hotel_category,
         source,
-        created_at
+        created_at,
+        updated_at
       FROM customer_itineraries
     `;
 
     const params: any[] = [];
 
-    if (status && status !== 'all') {
-      sql += ' WHERE status = ?';
-      params.push(status);
+    // Add WHERE clause
+    if (combined.whereSQL) {
+      sql += ` WHERE ${combined.whereSQL}`;
+      params.push(...combined.params);
     }
 
-    sql += ' ORDER BY created_at DESC';
+    // Add ORDER BY clause
+    if (orderBy) {
+      sql += ` ORDER BY ${orderBy}`;
+    } else {
+      sql += ` ORDER BY created_at DESC`;
+    }
 
-    const requests = await query(sql, params);
+    // Add pagination
+    sql += ` LIMIT ? OFFSET ?`;
+    params.push(pageSize, offset);
 
-    return NextResponse.json(requests);
+    // Build count query
+    let countSql = `SELECT COUNT(*) as total FROM customer_itineraries`;
+    if (combined.whereSQL) {
+      countSql += ` WHERE ${combined.whereSQL}`;
+    }
+
+    // Execute queries
+    const [rows, countResult] = await Promise.all([
+      query(sql, params),
+      query(countSql, combined.params)
+    ]);
+
+    const total = (countResult as any)[0].total;
+
+    // Transform rows to include Money types
+    const transformedRows = (rows as any[]).map(row => ({
+      ...row,
+      total_price: createMoney(parseFloat(row.total_price || 0), 'EUR'),
+      price_per_person: createMoney(parseFloat(row.price_per_person || 0), 'EUR')
+    }));
+
+    // Build paged response
+    const pagedResponse = buildPagedResponse(transformedRows, total, page, pageSize);
+
+    return successResponse(pagedResponse);
   } catch (error) {
-    console.error('Requests error:', error);
-    return NextResponse.json({ error: 'Failed to fetch requests' }, { status: 500 });
+    console.error('Database error:', error);
+    return errorResponse(
+      internalServerErrorProblem('Failed to fetch requests', '/api/requests')
+    );
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    // Require tenant
+    const tenantResult = requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { tenantId } = tenantResult;
+
+    // Check for idempotency key
+    const idempotencyKey = request.headers.get('Idempotency-Key');
+    if (idempotencyKey) {
+      const { checkIdempotencyKey, storeIdempotencyKey } = await import('@/middleware/idempotency');
+      const cachedResponse = await checkIdempotencyKey(request, idempotencyKey);
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+    }
+
     const body = await request.json();
 
     // Generate UUID
@@ -56,8 +164,8 @@ export async function POST(request: Request) {
     const totalPax = body.adults + body.children;
     const pricePerPerson = totalPax > 0 ? body.total_price / totalPax : 0;
 
-    const sql = `
-      INSERT INTO customer_itineraries (
+    const result = await query(
+      `INSERT INTO customer_itineraries (
         uuid,
         organization_id,
         customer_name,
@@ -76,113 +184,56 @@ export async function POST(request: Request) {
         status,
         source,
         city_nights
-      ) VALUES (?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'manual', '[]')
-    `;
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', 'manual', '[]')`,
+      [
+        uuid,
+        parseInt(tenantId),
+        body.customer_name,
+        body.customer_email,
+        body.customer_phone || null,
+        body.destination,
+        body.start_date,
+        body.end_date,
+        body.adults,
+        body.children,
+        body.hotel_category || null,
+        body.tour_type || null,
+        body.special_requests || null,
+        body.total_price,
+        pricePerPerson
+      ]
+    );
 
-    const params = [
-      uuid,
-      body.customer_name,
-      body.customer_email,
-      body.customer_phone || null,
-      body.destination,
-      body.start_date,
-      body.end_date,
-      body.adults,
-      body.children,
-      body.hotel_category || null,
-      body.tour_type || null,
-      body.special_requests || null,
-      body.total_price,
-      pricePerPerson
-    ];
+    const insertId = (result as any).insertId;
 
-    await query(sql, params);
+    // Fetch the created request to return with timestamps
+    const [createdRequest] = await query(
+      'SELECT * FROM customer_itineraries WHERE id = ?',
+      [insertId]
+    ) as any[];
 
-    return NextResponse.json({ success: true, message: 'Request created successfully' }, { status: 201 });
-  } catch (error) {
-    console.error('Create request error:', error);
-    return NextResponse.json({ error: 'Failed to create request' }, { status: 500 });
-  }
-}
+    // Transform to include Money types
+    const transformedRequest = {
+      ...createdRequest,
+      total_price: createMoney(parseFloat(createdRequest.total_price || 0), 'EUR'),
+      price_per_person: createMoney(parseFloat(createdRequest.price_per_person || 0), 'EUR')
+    };
 
-export async function PUT(request: Request) {
-  try {
-    const body = await request.json();
+    const { createdResponse } = await import('@/lib/response');
+    const response = createdResponse(transformedRequest, `/api/requests/${insertId}`);
 
-    if (!body.id) {
-      return NextResponse.json({ error: 'Request ID is required' }, { status: 400 });
+    // Store idempotency key if provided
+    if (idempotencyKey) {
+      const { storeIdempotencyKey } = await import('@/middleware/idempotency');
+      storeIdempotencyKey(idempotencyKey, response);
     }
 
-    // Calculate price per person
-    const totalPax = body.adults + body.children;
-    const pricePerPerson = totalPax > 0 ? body.total_price / totalPax : 0;
-
-    const sql = `
-      UPDATE customer_itineraries SET
-        customer_name = ?,
-        customer_email = ?,
-        customer_phone = ?,
-        destination = ?,
-        start_date = ?,
-        end_date = ?,
-        adults = ?,
-        children = ?,
-        hotel_category = ?,
-        tour_type = ?,
-        special_requests = ?,
-        total_price = ?,
-        price_per_person = ?,
-        status = ?
-      WHERE id = ?
-    `;
-
-    const params = [
-      body.customer_name,
-      body.customer_email,
-      body.customer_phone || null,
-      body.destination,
-      body.start_date,
-      body.end_date,
-      body.adults,
-      body.children,
-      body.hotel_category || null,
-      body.tour_type || null,
-      body.special_requests || null,
-      body.total_price,
-      pricePerPerson,
-      body.status || 'pending',
-      body.id
-    ];
-
-    await query(sql, params);
-
-    return NextResponse.json({ success: true, message: 'Request updated successfully' });
+    return response;
   } catch (error) {
-    console.error('Update request error:', error);
-    return NextResponse.json({ error: 'Failed to update request' }, { status: 500 });
+    console.error('Database error:', error);
+    return errorResponse(
+      internalServerErrorProblem('Failed to create request', '/api/requests')
+    );
   }
 }
 
-export async function DELETE(request: Request) {
-  try {
-    const body = await request.json();
-
-    if (!body.id) {
-      return NextResponse.json({ error: 'Request ID is required' }, { status: 400 });
-    }
-
-    // Soft delete - set status to cancelled
-    const sql = `
-      UPDATE customer_itineraries SET
-        status = 'cancelled'
-      WHERE id = ?
-    `;
-
-    await query(sql, [body.id]);
-
-    return NextResponse.json({ success: true, message: 'Request archived successfully' });
-  } catch (error) {
-    console.error('Delete request error:', error);
-    return NextResponse.json({ error: 'Failed to archive request' }, { status: 500 });
-  }
-}

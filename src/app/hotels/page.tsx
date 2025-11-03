@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 import HotelFilters from '@/components/hotels/HotelFilters';
 import HotelTable from '@/components/hotels/HotelTable';
 import ViewHotelModal from '@/components/hotels/ViewHotelModal';
@@ -55,6 +56,7 @@ interface Hotel {
 }
 
 export default function HotelsPage() {
+  const { organizationId } = useAuth();
   const [hotels, setHotels] = useState<Hotel[]>([]);
   const [allHotels, setAllHotels] = useState<Hotel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -82,20 +84,28 @@ export default function HotelsPage() {
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
   useEffect(() => {
-    fetchAllHotels();
-  }, []);
+    if (organizationId) {
+      fetchAllHotels();
+    }
+  }, [organizationId]);
 
   useEffect(() => {
     setCurrentPage(1);
   }, [statusFilter, starRatingFilter, hotelCategoryFilter, cityFilter, searchTerm]);
 
   useEffect(() => {
-    fetchHotels();
-  }, [currentPage, statusFilter, starRatingFilter, hotelCategoryFilter, cityFilter, searchTerm]);
+    if (organizationId) {
+      fetchHotels();
+    }
+  }, [organizationId, currentPage, statusFilter, starRatingFilter, hotelCategoryFilter, cityFilter, searchTerm]);
 
   async function fetchAllHotels() {
     try {
-      const res = await fetch('/api/hotels?limit=10000');
+      const res = await fetch('/api/hotels?limit=10000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
       setAllHotels(Array.isArray(data.data) ? data.data : []);
     } catch (error) {
@@ -132,7 +142,11 @@ export default function HotelsPage() {
         params.append('search', searchTerm);
       }
 
-      const res = await fetch(`/api/hotels?${params.toString()}`);
+      const res = await fetch(`/api/hotels?${params.toString()}`, {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
 
       setHotels(Array.isArray(data.data) ? data.data : []);
@@ -183,10 +197,12 @@ export default function HotelsPage() {
 
     setDeleteSubmitting(true);
     try {
-      const res = await fetch('/api/hotels', {
+      const res = await fetch(`/api/hotels/${selectedHotel.id}`, {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ id: selectedHotel.id })
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': organizationId
+        }
       });
 
       if (!res.ok) {

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 import ExtraExpenseFilters from '@/components/extra-expenses/ExtraExpenseFilters';
 import ExtraExpenseTable from '@/components/extra-expenses/ExtraExpenseTable';
 import ViewExtraExpenseModal from '@/components/extra-expenses/ViewExtraExpenseModal';
@@ -26,6 +27,7 @@ interface ExtraExpense {
 }
 
 export default function ExtraExpensesPage() {
+  const { organizationId } = useAuth();
   const [expenses, setExpenses] = useState<ExtraExpense[]>([]);
   const [filteredExpenses, setFilteredExpenses] = useState<ExtraExpense[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,11 +56,17 @@ export default function ExtraExpensesPage() {
 
   async function fetchExpenses() {
     try {
-      const res = await fetch('/api/extra-expenses');
+      const res = await fetch('/api/extra-expenses?limit=10000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
-      setExpenses(data);
+      const expensesData = Array.isArray(data.data) ? data.data : [];
+      setExpenses(expensesData);
     } catch (error) {
       console.error('Failed to fetch extra expenses:', error);
+      setExpenses([]);
     } finally {
       setLoading(false);
     }
@@ -120,7 +128,10 @@ export default function ExtraExpensesPage() {
     try {
       const res = await fetch('/api/extra-expenses', {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': organizationId
+        },
         body: JSON.stringify({ id: selectedExpense.id })
       });
 

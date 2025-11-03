@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Transfer {
   id: number;
@@ -19,8 +20,6 @@ interface Transfer {
   created_by: number | null;
   vehicle_type: string | null;
   capacity: number | null;
-  brand: string | null;
-  model: string | null;
 }
 
 interface Vehicle {
@@ -45,6 +44,7 @@ interface EditTransferModalProps {
 }
 
 export default function EditTransferModal({ isOpen, onClose, onSuccess, transfer }: EditTransferModalProps) {
+  const { organizationId } = useAuth();
   const [formData, setFormData] = useState({
     id: 0,
     provider_id: null as number | null,
@@ -97,19 +97,28 @@ export default function EditTransferModal({ isOpen, onClose, onSuccess, transfer
 
   async function fetchProviders() {
     try {
-      const res = await fetch('/api/providers');
+      const res = await fetch('/api/providers?limit=1000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
-      setProviders(data);
+      setProviders(Array.isArray(data.data) ? data.data : []);
     } catch (error) {
       console.error('Failed to fetch providers:', error);
+      setProviders([]);
     }
   }
 
   async function fetchVehicles() {
     try {
-      const res = await fetch('/api/vehicles');
+      const res = await fetch('/api/vehicles?limit=1000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
-      setVehicles(Array.isArray(data) ? data : []);
+      setVehicles(Array.isArray(data.data) ? data.data : []);
     } catch (error) {
       console.error('Failed to fetch vehicles:', error);
       setVehicles([]);

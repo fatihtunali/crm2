@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface NewExtraExpenseModalProps {
   isOpen: boolean;
@@ -7,6 +8,7 @@ interface NewExtraExpenseModalProps {
 }
 
 export default function NewExtraExpenseModal({ isOpen, onClose, onSuccess }: NewExtraExpenseModalProps) {
+  const { organizationId } = useAuth();
   const [formData, setFormData] = useState({
     expense_name: '',
     expense_category: '',
@@ -59,8 +61,12 @@ export default function NewExtraExpenseModal({ isOpen, onClose, onSuccess }: New
 
       const res = await fetch('/api/extra-expenses', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': organizationId
+        },
         body: JSON.stringify({
+          organization_id: organizationId,
           expense_name: formData.expense_name,
           expense_category: formData.expense_category,
           city: formData.city,

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface ExtraExpense {
   id: number;
@@ -28,6 +29,7 @@ interface EditExtraExpenseModalProps {
 }
 
 export default function EditExtraExpenseModal({ isOpen, onClose, onSuccess, expense }: EditExtraExpenseModalProps) {
+  const { organizationId } = useAuth();
   const [formData, setFormData] = useState({
     id: 0,
     provider_id: null as number | null,
@@ -67,11 +69,16 @@ export default function EditExtraExpenseModal({ isOpen, onClose, onSuccess, expe
 
   async function fetchProviders() {
     try {
-      const res = await fetch('/api/providers');
+      const res = await fetch('/api/providers?limit=1000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
-      setProviders(data);
+      setProviders(Array.isArray(data.data) ? data.data : []);
     } catch (error) {
       console.error('Failed to fetch providers:', error);
+      setProviders([]);
     }
   }
 

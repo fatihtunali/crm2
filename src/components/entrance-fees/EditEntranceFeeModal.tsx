@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface EntranceFee {
   id: number;
@@ -34,6 +35,7 @@ interface EditEntranceFeeModalProps {
 }
 
 export default function EditEntranceFeeModal({ isOpen, onClose, onSuccess, entranceFee }: EditEntranceFeeModalProps) {
+  const { organizationId } = useAuth();
   const [formData, setFormData] = useState({
     id: 0,
     provider_id: null as number | null,
@@ -87,11 +89,16 @@ export default function EditEntranceFeeModal({ isOpen, onClose, onSuccess, entra
 
   async function fetchProviders() {
     try {
-      const res = await fetch('/api/providers');
+      const res = await fetch('/api/providers?limit=1000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
-      setProviders(data);
+      setProviders(Array.isArray(data.data) ? data.data : []);
     } catch (error) {
       console.error('Failed to fetch providers:', error);
+      setProviders([]);
     }
   }
 

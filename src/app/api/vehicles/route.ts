@@ -1,13 +1,134 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { parsePaginationParams, buildPagedResponse } from '@/lib/pagination';
+import { createdResponse, errorResponse, badRequestProblem, internalServerErrorProblem } from '@/lib/response';
+import { requireTenant } from '@/middleware/tenancy';
+import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
+import { handleError } from '@/middleware/errorHandler';
+import type { PagedResponse } from '@/types/api';
 
-// GET - Fetch all vehicles with their pricing
-export async function GET(request: Request) {
+interface Vehicle {
+  id: number;
+  organization_id: number;
+  provider_id: number | null;
+  vehicle_type: string;
+  max_capacity: number;
+  city: string;
+  description: string | null;
+  status: string;
+  created_at: string;
+  updated_at: string;
+  // Pricing fields
+  pricing_id?: number | null;
+  season_name?: string | null;
+  season_start?: string | null;
+  season_end?: string | null;
+  currency?: string | null;
+  price_per_day?: number | null;
+  price_half_day?: number | null;
+  // Provider fields
+  provider_name?: string | null;
+}
+
+/**
+ * GET /api/vehicles
+ * Fetch vehicles with pagination, search, filtering, and sorting
+ *
+ * Query parameters:
+ * - page: Page number (default: 1)
+ * - pageSize/page_size: Items per page (default: 25, max: 200)
+ * - search: Search term for vehicle_type, city, description
+ * - status: Filter by status (active, inactive)
+ * - city: Filter by city
+ * - vehicle_type: Filter by vehicle type
+ * - sort: Sort order (e.g., "vehicle_type,-max_capacity" for vehicle_type ASC, max_capacity DESC)
+ *
+ * Headers:
+ * - X-Tenant-Id: Required tenant identifier
+ */
+export async function GET(request: NextRequest) {
   try {
-    const { searchParams } = new URL(request.url);
-    const statusFilter = searchParams.get('status');
-    const cityFilter = searchParams.get('city');
+    // Require tenant
+    const tenantResult = requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { tenantId } = tenantResult;
 
+    const { searchParams } = new URL(request.url);
+
+    // Parse pagination
+    const { page, pageSize, offset } = parsePaginationParams(searchParams);
+
+    // Build WHERE conditions manually with table qualifiers
+    const whereConditions: string[] = [];
+    const params: any[] = [];
+
+    // Add tenancy filter
+    whereConditions.push('v.organization_id = ?');
+    params.push(parseInt(tenantId));
+
+    // Status filter
+    const status = searchParams.get('status');
+    if (status && status !== 'all') {
+      whereConditions.push('v.status = ?');
+      params.push(status);
+    }
+
+    // City filter
+    const city = searchParams.get('city');
+    if (city && city !== 'all') {
+      whereConditions.push('v.city = ?');
+      params.push(city);
+    }
+
+    // Vehicle type filter
+    const vehicleType = searchParams.get('vehicle_type');
+    if (vehicleType && vehicleType !== 'all') {
+      whereConditions.push('v.vehicle_type = ?');
+      params.push(vehicleType);
+    }
+
+    // Build search clause
+    const searchTerm = searchParams.get('search');
+    if (searchTerm && searchTerm.trim() !== '') {
+      whereConditions.push('(v.vehicle_type LIKE ? OR v.city LIKE ? OR v.description LIKE ?)');
+      const searchValue = `%${searchTerm}%`;
+      params.push(searchValue, searchValue, searchValue);
+    }
+
+    const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : '';
+
+    // Parse sort
+    const sortParam = searchParams.get('sort');
+    let orderBy = 'v.vehicle_type ASC, v.city ASC'; // Default sort
+
+    if (sortParam) {
+      // Map sort fields to actual column names
+      const sortFields = sortParam.split(',').map(field => {
+        const trimmed = field.trim();
+        const isDesc = trimmed.startsWith('-');
+        const fieldName = isDesc ? trimmed.substring(1) : trimmed;
+        const direction = isDesc ? 'DESC' : 'ASC';
+
+        // Map field names to actual columns
+        const columnMap: Record<string, string> = {
+          'vehicle_type': 'v.vehicle_type',
+          'max_capacity': 'v.max_capacity',
+          'city': 'v.city',
+          'status': 'v.status',
+          'created_at': 'v.created_at',
+          'updated_at': 'v.updated_at',
+        };
+
+        const column = columnMap[fieldName] || `v.${fieldName}`;
+        return `${column} ${direction}`;
+      });
+
+      orderBy = sortFields.join(', ');
+    }
+
+    // Build base query
     let sql = `
       SELECT
         v.*,
@@ -24,113 +145,153 @@ export async function GET(request: Request) {
       LEFT JOIN vehicle_pricing vp ON v.id = vp.vehicle_id
         AND vp.status = 'active'
         AND CURDATE() BETWEEN vp.start_date AND vp.end_date
-      WHERE 1=1
     `;
 
-    const params: any[] = [];
-
-    if (statusFilter && statusFilter !== 'all') {
-      sql += ' AND v.status = ?';
-      params.push(statusFilter);
+    // Add WHERE clause
+    if (whereClause) {
+      sql += ` WHERE ${whereClause}`;
     }
 
-    if (cityFilter && cityFilter !== 'all') {
-      sql += ' AND v.city = ?';
-      params.push(cityFilter);
+    // Add ORDER BY, LIMIT, OFFSET
+    sql += ` ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+    params.push(pageSize, offset);
+
+    // Build count query
+    let countSql = `
+      SELECT COUNT(DISTINCT v.id) as total
+      FROM vehicles v
+    `;
+
+    if (whereClause) {
+      countSql += ` WHERE ${whereClause}`;
     }
 
-    sql += ' ORDER BY v.id DESC';
+    // Build count params (without pagination params)
+    const countParams = params.slice(0, -2);
 
-    const rows = await query(sql, params);
+    // Execute queries in parallel
+    const [rows, countResult] = await Promise.all([
+      query(sql, params),
+      query(countSql, countParams),
+    ]);
 
-    return NextResponse.json(rows);
-  } catch (error) {
-    console.error('Database error:', error);
-    return NextResponse.json({ error: 'Failed to fetch vehicles' }, { status: 500 });
-  }
-}
+    const total = (countResult as any)[0].total;
 
-// POST - Create new vehicle
-export async function POST(request: Request) {
-  try {
-    const body = await request.json();
-    const {
-      organization_id,
-      vehicle_type,
-      max_capacity,
-      city,
-      description
-    } = body;
-
-    const result = await query(
-      `INSERT INTO vehicles (
-        organization_id, vehicle_type, max_capacity, city, description, status
-      ) VALUES (?, ?, ?, ?, ?, 'active')`,
-      [
-        organization_id || 1,
-        vehicle_type,
-        max_capacity,
-        city,
-        description
-      ]
+    // Build paged response
+    const response: PagedResponse<Vehicle> = buildPagedResponse(
+      rows as Vehicle[],
+      total,
+      page,
+      pageSize
     );
 
-    return NextResponse.json({ success: true, id: (result as any).insertId });
+    return NextResponse.json(response);
   } catch (error) {
-    console.error('Database error:', error);
-    return NextResponse.json({ error: 'Failed to create vehicle' }, { status: 500 });
+    return handleError(error, request.url);
   }
 }
 
-// PUT - Update vehicle
-export async function PUT(request: Request) {
+/**
+ * POST /api/vehicles
+ * Create a new vehicle
+ *
+ * Headers:
+ * - X-Tenant-Id: Required tenant identifier
+ * - Idempotency-Key: Optional idempotency key for safe retries
+ *
+ * Body:
+ * - vehicle_type: string (required)
+ * - max_capacity: number (required)
+ * - city: string (required)
+ * - description: string (optional)
+ * - provider_id: number (optional)
+ * - status: string (optional, defaults to 'active')
+ */
+export async function POST(request: NextRequest) {
   try {
+    // Require tenant
+    const tenantResult = requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { tenantId } = tenantResult;
+
+    // Check idempotency key
+    const idempotencyKey = request.headers.get('Idempotency-Key');
+    if (idempotencyKey) {
+      const cachedResponse = await checkIdempotencyKey(request, idempotencyKey);
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+    }
+
+    // Parse and validate request body
     const body = await request.json();
     const {
-      id,
-      provider_id,
       vehicle_type,
       max_capacity,
       city,
       description,
-      status
+      provider_id,
+      status = 'active',
     } = body;
 
-    await query(
-      `UPDATE vehicles SET
-        provider_id = ?, vehicle_type = ?, max_capacity = ?, city = ?, description = ?, status = ?
-      WHERE id = ?`,
+    // Validate required fields
+    if (!vehicle_type || !city) {
+      return errorResponse(
+        badRequestProblem(
+          'Missing required fields: vehicle_type and city are required',
+          request.url
+        )
+      );
+    }
+
+    if (!max_capacity || typeof max_capacity !== 'number' || max_capacity <= 0) {
+      return errorResponse(
+        badRequestProblem(
+          'Invalid max_capacity: must be a positive number',
+          request.url
+        )
+      );
+    }
+
+    // Insert vehicle
+    const result = await query(
+      `INSERT INTO vehicles (
+        organization_id, vehicle_type, max_capacity, city, description, provider_id, status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
-        provider_id,
+        tenantId,
         vehicle_type,
         max_capacity,
         city,
-        description,
+        description || null,
+        provider_id || null,
         status,
-        id
       ]
     );
 
-    return NextResponse.json({ success: true });
-  } catch (error) {
-    console.error('Database error:', error);
-    return NextResponse.json({ error: 'Failed to update vehicle' }, { status: 500 });
-  }
-}
+    const insertId = (result as any).insertId;
 
-// DELETE - Soft delete (archive) vehicle
-export async function DELETE(request: Request) {
-  try {
-    const { id } = await request.json();
+    // Fetch the created vehicle
+    const [createdVehicle] = await query(
+      `SELECT * FROM vehicles WHERE id = ?`,
+      [insertId]
+    ) as Vehicle[];
 
-    await query(
-      'UPDATE vehicles SET status = ? WHERE id = ?',
-      ['inactive', id]
+    // Create response
+    const response = createdResponse(
+      createdVehicle,
+      `/api/vehicles/${insertId}`
     );
 
-    return NextResponse.json({ success: true });
+    // Store idempotency key if provided
+    if (idempotencyKey) {
+      storeIdempotencyKey(idempotencyKey, response);
+    }
+
+    return response;
   } catch (error) {
-    console.error('Database error:', error);
-    return NextResponse.json({ error: 'Failed to archive vehicle' }, { status: 500 });
+    return handleError(error, request.url);
   }
 }

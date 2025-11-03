@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Guide {
   id: number;
@@ -25,6 +26,7 @@ interface EditGuideModalProps {
 }
 
 export default function EditGuideModal({ isOpen, onClose, onSuccess, guide }: EditGuideModalProps) {
+  const { organizationId } = useAuth();
   const [formData, setFormData] = useState({
     id: 0,
     organization_id: 1,
@@ -58,11 +60,16 @@ export default function EditGuideModal({ isOpen, onClose, onSuccess, guide }: Ed
 
   async function fetchProviders() {
     try {
-      const res = await fetch('/api/providers');
+      const res = await fetch('/api/providers?limit=1000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
-      setProviders(data);
+      setProviders(Array.isArray(data.data) ? data.data : []);
     } catch (error) {
       console.error('Failed to fetch providers:', error);
+      setProviders([]);
     }
   }
 

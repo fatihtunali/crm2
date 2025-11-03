@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
 import SupplierSearch from '@/components/SupplierSearch';
 
 interface Expense {
@@ -58,6 +59,7 @@ const EXPENSE_CATEGORIES = [
 const HOTEL_CATEGORIES = ['3 stars', '4 stars', '5 stars', 'Special Class', 'Boutique'];
 
 export default function QuotationBuilderPage() {
+  const { organizationId } = useAuth();
   const params = useParams();
   const router = useRouter();
   const [quotation, setQuotation] = useState<Quotation | null>(null);
@@ -76,7 +78,11 @@ export default function QuotationBuilderPage() {
 
   async function fetchQuotation() {
     try {
-      const res = await fetch(`/api/quotations/${params.id}`);
+      const res = await fetch(`/api/quotations/${params.id}`, {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
 
       // If no days exist, initialize with days based on start/end date
@@ -192,7 +198,10 @@ export default function QuotationBuilderPage() {
         if (!dayId) {
           const dayRes = await fetch(`/api/quotations/${params.id}/days`, {
             method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Tenant-Id': organizationId
+            },
             body: JSON.stringify({
               day_number: day.day_number,
               date: day.date
@@ -208,14 +217,20 @@ export default function QuotationBuilderPage() {
             // Update existing expense
             await fetch(`/api/quotations/${params.id}/expenses`, {
               method: 'PUT',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Tenant-Id': organizationId
+              },
               body: JSON.stringify({ ...expense, quote_day_id: dayId })
             });
           } else {
             // Create new expense
             await fetch(`/api/quotations/${params.id}/expenses`, {
               method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
+              headers: {
+                'Content-Type': 'application/json',
+                'X-Tenant-Id': organizationId
+              },
               body: JSON.stringify({ ...expense, quote_day_id: dayId })
             });
           }
@@ -228,7 +243,10 @@ export default function QuotationBuilderPage() {
       // Update quote with total
       await fetch('/api/quotations', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': organizationId
+        },
         body: JSON.stringify({
           id: quotation.id,
           total_price: totalPrice,

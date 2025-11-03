@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 import EntranceFeeFilters from '@/components/entrance-fees/EntranceFeeFilters';
 import EntranceFeeTable from '@/components/entrance-fees/EntranceFeeTable';
 import ViewEntranceFeeModal from '@/components/entrance-fees/ViewEntranceFeeModal';
@@ -39,6 +40,7 @@ interface EntranceFee {
 }
 
 export default function EntranceFeesPage() {
+  const { organizationId } = useAuth();
   const [fees, setFees] = useState<EntranceFee[]>([]);
   const [filteredFees, setFilteredFees] = useState<EntranceFee[]>([]);
   const [loading, setLoading] = useState(true);
@@ -67,10 +69,16 @@ export default function EntranceFeesPage() {
 
   async function fetchFees() {
     try {
-      const res = await fetch('/api/entrance-fees');
+      const res = await fetch('/api/entrance-fees?limit=10000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
-      // Ensure data is always an array
-      setFees(Array.isArray(data) ? data : []);
+
+      // Handle paged response format
+      const feesData = Array.isArray(data.data) ? data.data : [];
+      setFees(feesData);
     } catch (error) {
       console.error('Failed to fetch entrance fees:', error);
       setFees([]);
@@ -141,7 +149,10 @@ export default function EntranceFeesPage() {
     try {
       const res = await fetch('/api/entrance-fees', {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': organizationId
+        },
         body: JSON.stringify({ id: selectedFee.id })
       });
 

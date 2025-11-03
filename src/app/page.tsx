@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function Dashboard() {
-  const [stats, setStats] = useState({
+  const { organizationId } = useAuth();
+  const [stats, setStats] = useState<any>({
     activeRequests: 0,
     thisMonthBookings: 0,
-    revenue: 0,
+    revenue: { amount_minor: 0, currency: 'EUR' },
     pendingQuotes: 0
   });
   const [recentRequests, setRecentRequests] = useState([]);
@@ -16,10 +18,15 @@ export default function Dashboard() {
   useEffect(() => {
     async function fetchDashboardData() {
       try {
+        // Add X-Tenant-Id header for multi-tenancy
+        const headers = {
+          'X-Tenant-Id': organizationId
+        };
+
         const [statsRes, requestsRes, toursRes] = await Promise.all([
-          fetch('/api/dashboard/stats'),
-          fetch('/api/dashboard/recent-requests'),
-          fetch('/api/dashboard/upcoming-tours')
+          fetch('/api/dashboard/stats', { headers }),
+          fetch('/api/dashboard/recent-requests', { headers }),
+          fetch('/api/dashboard/upcoming-tours', { headers })
         ]);
 
         const statsData = await statsRes.json();
@@ -37,7 +44,7 @@ export default function Dashboard() {
     }
 
     fetchDashboardData();
-  }, []);
+  }, [organizationId]);
 
   const statsDisplay = [
     {
@@ -54,7 +61,7 @@ export default function Dashboard() {
     },
     {
       label: 'Total Revenue (EUR)',
-      value: loading ? '...' : `€${stats.revenue.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      value: loading ? '...' : `€${(stats.revenue.amount_minor / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
       icon: '💰',
       color: 'yellow'
     },
@@ -121,7 +128,9 @@ export default function Dashboard() {
                       <p className="text-xs text-gray-400 mt-1">{request.date}</p>
                     </div>
                     <div className="text-right">
-                      <p className="font-semibold text-gray-900">{request.value}</p>
+                      <p className="font-semibold text-gray-900">
+                        €{(request.value.amount_minor / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
                       <span className={`inline-block px-2 py-1 text-xs rounded-full mt-1 ${getStatusColor(request.status)}`}>
                         {request.status}
                       </span>

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 import VehicleFilters from '@/components/vehicles/VehicleFilters';
 import VehicleTable from '@/components/vehicles/VehicleTable';
 import ViewVehicleModal from '@/components/vehicles/ViewVehicleModal';
@@ -30,6 +31,7 @@ interface Vehicle {
 }
 
 export default function VehiclesPage() {
+  const { organizationId } = useAuth();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [filteredVehicles, setFilteredVehicles] = useState<Vehicle[]>([]);
   const [loading, setLoading] = useState(true);
@@ -58,10 +60,16 @@ export default function VehiclesPage() {
 
   async function fetchVehicles() {
     try {
-      const res = await fetch('/api/vehicles');
+      const res = await fetch('/api/vehicles?limit=10000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
-      // Ensure data is always an array
-      setVehicles(Array.isArray(data) ? data : []);
+
+      // Handle paged response format
+      const vehiclesData = Array.isArray(data.data) ? data.data : [];
+      setVehicles(vehiclesData);
     } catch (error) {
       console.error('Failed to fetch vehicles:', error);
       setVehicles([]);
@@ -128,7 +136,10 @@ export default function VehiclesPage() {
     try {
       const res = await fetch('/api/vehicles', {
         method: 'DELETE',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': organizationId
+        },
         body: JSON.stringify({ id: selectedVehicle.id })
       });
 

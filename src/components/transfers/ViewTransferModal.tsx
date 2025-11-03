@@ -16,8 +16,6 @@ interface Transfer {
   created_by: number | null;
   vehicle_type: string | null;
   capacity: number | null;
-  brand: string | null;
-  model: string | null;
 }
 
 interface ViewTransferModalProps {
@@ -43,9 +41,6 @@ export default function ViewTransferModal({ isOpen, onClose, onEdit, transfer }:
     if (!transfer.vehicle_type) return 'N/A';
 
     const parts = [transfer.vehicle_type];
-    if (transfer.brand && transfer.model) {
-      parts.push(`${transfer.brand} ${transfer.model}`);
-    }
     if (transfer.capacity) {
       parts.push(`(Capacity: ${transfer.capacity} passengers)`);
     }

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface Quotation {
   id: number;
@@ -23,6 +24,7 @@ interface Quotation {
 }
 
 export default function QuotationsPage() {
+  const { organizationId } = useAuth();
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
@@ -37,10 +39,16 @@ export default function QuotationsPage() {
       if (statusFilter !== 'all') {
         params.append('status', statusFilter);
       }
+      params.append('limit', '10000');
 
-      const res = await fetch(`/api/quotations?${params.toString()}`);
+      const res = await fetch(`/api/quotations?${params.toString()}`, {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
-      setQuotations(Array.isArray(data) ? data : []);
+      const quotationsData = Array.isArray(data.data) ? data.data : [];
+      setQuotations(quotationsData);
     } catch (error) {
       console.error('Failed to fetch quotations:', error);
       setQuotations([]);

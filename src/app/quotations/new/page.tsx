@@ -2,8 +2,10 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useAuth } from '@/contexts/AuthContext';
 
 export default function NewQuotationPage() {
+  const { organizationId } = useAuth();
   const router = useRouter();
   const [loading, setLoading] = useState(false);
   const [formData, setFormData] = useState({
@@ -53,7 +55,10 @@ export default function NewQuotationPage() {
       // Create quotation
       const res = await fetch('/api/quotations', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': organizationId
+        },
         body: JSON.stringify(cleanedData)
       });
 
@@ -65,7 +70,10 @@ export default function NewQuotationPage() {
 
       // Auto-generate itinerary
       const genRes = await fetch(`/api/quotations/${data.id}/generate-itinerary`, {
-        method: 'POST'
+        method: 'POST',
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
       });
 
       if (!genRes.ok) {

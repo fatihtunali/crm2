@@ -1,6 +1,8 @@
 'use client';
 
 import { useEffect, useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
+import type { Money } from '@/types/api';
 import RequestFilters from '@/components/requests/RequestFilters';
 import RequestTable from '@/components/requests/RequestTable';
 import ViewRequestModal from '@/components/requests/ViewRequestModal';
@@ -18,8 +20,8 @@ interface Request {
   end_date: string;
   adults: number;
   children: number;
-  total_price: string;
-  price_per_person: string;
+  total_price: Money;
+  price_per_person: Money;
   status: string;
   tour_type: string | null;
   hotel_category: string | null;
@@ -28,6 +30,7 @@ interface Request {
 }
 
 export default function RequestsPage() {
+  const { organizationId } = useAuth();
   const [requests, setRequests] = useState<Request[]>([]);
   const [filteredRequests, setFilteredRequests] = useState<Request[]>([]);
   const [loading, setLoading] = useState(true);
@@ -45,8 +48,10 @@ export default function RequestsPage() {
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
   useEffect(() => {
-    fetchRequests();
-  }, []);
+    if (organizationId) {
+      fetchRequests();
+    }
+  }, [organizationId]);
 
   useEffect(() => {
     filterRequests();
@@ -54,9 +59,13 @@ export default function RequestsPage() {
 
   async function fetchRequests() {
     try {
-      const res = await fetch('/api/requests');
+      const res = await fetch('/api/requests', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
       const data = await res.json();
-      setRequests(data);
+      setRequests(data.data || []);
     } catch (error) {
       console.error('Failed to fetch requests:', error);
     } finally {

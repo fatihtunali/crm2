@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
 import Link from 'next/link';
+import type { Money } from '@/types/api';
 
 interface Supplier {
   provider_id: number;
@@ -11,9 +12,9 @@ interface Supplier {
   contact_email: string;
   contact_phone: string;
   invoice_count: number;
-  total_invoiced: number;
-  total_paid: number;
-  outstanding: number;
+  total_invoiced: Money;
+  total_paid: Money;
+  outstanding: Money;
   last_payment_date: string | null;
   overdue_count: number;
   pending_count: number;
@@ -26,9 +27,9 @@ interface Customer {
   customer_phone: string;
   invoice_count: number;
   booking_count: number;
-  total_invoiced: number;
-  total_received: number;
-  outstanding: number;
+  total_invoiced: Money;
+  total_received: Money;
+  outstanding: Money;
   last_payment_date: string | null;
   overdue_count: number;
   partial_count: number;
@@ -42,10 +43,10 @@ interface Summary {
   payablesAging: any;
   topSuppliers: any[];
   topCustomers: any[];
-  netPosition: number;
-  totalTurnover: number;
-  totalCosts: number;
-  netMargin: number;
+  netPosition: Money;
+  totalTurnover: Money;
+  totalCosts: Money;
+  netMargin: Money;
   marginPercentage: number;
 }
 

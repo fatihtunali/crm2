@@ -35,8 +35,71 @@ tags:
     description: Dashboard statistics and metrics
   - name: Providers
     description: Manage provider/company information
+  - name: Reports - Executive
+    description: Executive-level business intelligence reports
+  - name: Reports - Sales
+    description: Sales performance and revenue analytics
+  - name: Reports - Clients
+    description: Client demographics and lifetime value analysis
+  - name: Reports - Agents
+    description: Tour operator performance metrics
+  - name: Reports - Financial
+    description: Financial reports and commission tracking
+  - name: Reports - Operations
+    description: Operational efficiency and capacity reports
+  - name: Reports - Pricing
+    description: Pricing analysis and cost structure
 
 components:
+  securitySchemes:
+    TenantId:
+      type: apiKey
+      in: header
+      name: X-Tenant-Id
+      description: Organization/Tenant identifier for multi-tenancy
+
+  parameters:
+    PeriodParam:
+      name: period
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [last_7_days, last_30_days, last_90_days, this_month, last_month, this_year, last_year]
+        default: last_30_days
+      description: Time period for the report
+
+    ComparisonParam:
+      name: comparison
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [previous_period, last_year]
+        default: previous_period
+      description: Comparison period for trend analysis
+
+    LimitParam:
+      name: limit
+      in: query
+      required: false
+      schema:
+        type: integer
+        minimum: 1
+        maximum: 1000
+        default: 50
+      description: Maximum number of results to return
+
+    SortParam:
+      name: sort
+      in: query
+      required: false
+      schema:
+        type: string
+        enum: [revenue, bookings, name, date]
+        default: revenue
+      description: Sort order for results
+
   schemas:
     Error:
       type: object
@@ -44,6 +107,30 @@ components:
         error:
           type: string
           description: Error message
+
+    Money:
+      type: object
+      properties:
+        amount_minor:
+          type: integer
+          description: Amount in minor units (cents)
+          example: 125000
+        currency:
+          type: string
+          description: ISO 4217 currency code
+          example: EUR
+
+    Period:
+      type: object
+      properties:
+        start_date:
+          type: string
+          format: date
+          example: "2025-10-01"
+        end_date:
+          type: string
+          format: date
+          example: "2025-10-31"
 
     Provider:
       type: object
@@ -1183,3 +1270,1865 @@ paths:
                 type: array
                 items:
                   type: object
+
+  # ========================================
+  # REPORTS API - Executive Reports
+  # ========================================
+  /api/reports/executive/summary:
+    get:
+      tags:
+        - Reports - Executive
+      summary: Get executive summary dashboard
+      description: |
+        Returns comprehensive executive-level metrics including:
+        - Key business metrics (revenue, bookings, margins)
+        - Period-over-period comparisons
+        - Top performers (destinations, agents, clients)
+        - Financial health indicators
+        - Operational metrics
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+        - $ref: '#/components/parameters/ComparisonParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      period:
+                        $ref: '#/components/schemas/Period'
+                      keyMetrics:
+                        type: object
+                        properties:
+                          totalRevenue:
+                            $ref: '#/components/schemas/Money'
+                          totalBookings:
+                            type: integer
+                            example: 127
+                          netMargin:
+                            $ref: '#/components/schemas/Money'
+                          averageBookingValue:
+                            $ref: '#/components/schemas/Money'
+                          conversionRate:
+                            type: number
+                            format: float
+                            example: 0.68
+                      topDestinations:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            destination:
+                              type: string
+                              example: "Istanbul"
+                            bookings:
+                              type: integer
+                              example: 45
+                            revenue:
+                              $ref: '#/components/schemas/Money'
+                      topAgents:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            agentName:
+                              type: string
+                              example: "John Smith"
+                            bookings:
+                              type: integer
+                            revenue:
+                              $ref: '#/components/schemas/Money'
+                      topClients:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            clientName:
+                              type: string
+                            bookings:
+                              type: integer
+                            lifetimeValue:
+                              $ref: '#/components/schemas/Money'
+        '400':
+          description: Bad request - invalid parameters
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized - missing or invalid tenant ID
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  # ========================================
+  # REPORTS API - Sales Reports
+  # ========================================
+  /api/reports/sales/overview:
+    get:
+      tags:
+        - Reports - Sales
+      summary: Get sales overview report
+      description: |
+        Provides comprehensive sales metrics including:
+        - Total revenue and booking counts
+        - Month-over-month and year-over-year trends
+        - Sales by status (confirmed, pending, cancelled)
+        - Average deal size and conversion metrics
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+        - $ref: '#/components/parameters/ComparisonParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      totalRevenue:
+                        $ref: '#/components/schemas/Money'
+                      totalBookings:
+                        type: integer
+                      averageDealSize:
+                        $ref: '#/components/schemas/Money'
+                      conversionRate:
+                        type: number
+                        format: float
+                      salesByStatus:
+                        type: object
+                        properties:
+                          confirmed:
+                            type: integer
+                          pending:
+                            type: integer
+                          cancelled:
+                            type: integer
+                      trends:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            date:
+                              type: string
+                              format: date
+                            revenue:
+                              $ref: '#/components/schemas/Money'
+                            bookings:
+                              type: integer
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  /api/reports/sales/quotes:
+    get:
+      tags:
+        - Reports - Sales
+      summary: Get quotation analytics report
+      description: |
+        Analyzes quotation performance including:
+        - Quote-to-booking conversion rates
+        - Average quote value and win rates
+        - Time-to-conversion metrics
+        - Lost opportunity analysis
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, draft, sent, accepted, rejected]
+            default: all
+          description: Filter by quotation status
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      totalQuotes:
+                        type: integer
+                      acceptedQuotes:
+                        type: integer
+                      conversionRate:
+                        type: number
+                        format: float
+                      averageQuoteValue:
+                        $ref: '#/components/schemas/Money'
+                      averageTimeToConversion:
+                        type: number
+                        description: Average days to convert quote to booking
+                      quotesByStatus:
+                        type: object
+                        properties:
+                          draft:
+                            type: integer
+                          sent:
+                            type: integer
+                          accepted:
+                            type: integer
+                          rejected:
+                            type: integer
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  /api/reports/sales/destinations:
+    get:
+      tags:
+        - Reports - Sales
+      summary: Get sales by destination report
+      description: |
+        Breaks down sales performance by destination:
+        - Revenue and booking counts per destination
+        - Market share analysis
+        - Growth trends by location
+        - Seasonal patterns
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - $ref: '#/components/parameters/SortParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        destination:
+                          type: string
+                          example: "Cappadocia"
+                        city:
+                          type: string
+                          example: "Nevşehir"
+                        bookings:
+                          type: integer
+                          example: 38
+                        revenue:
+                          $ref: '#/components/schemas/Money'
+                        averageBookingValue:
+                          $ref: '#/components/schemas/Money'
+                        growthRate:
+                          type: number
+                          format: float
+                          description: Percentage growth vs comparison period
+                          example: 15.5
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  /api/reports/sales/trends:
+    get:
+      tags:
+        - Reports - Sales
+      summary: Get sales trends and forecasting
+      description: |
+        Provides time-series sales data and trend analysis:
+        - Daily/weekly/monthly revenue trends
+        - Booking velocity metrics
+        - Seasonal patterns
+        - Predictive forecasting
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+        - name: granularity
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [daily, weekly, monthly]
+            default: daily
+          description: Time granularity for trend data
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      trends:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            date:
+                              type: string
+                              format: date
+                            revenue:
+                              $ref: '#/components/schemas/Money'
+                            bookings:
+                              type: integer
+                            quotes:
+                              type: integer
+                      movingAverage:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            date:
+                              type: string
+                              format: date
+                            value:
+                              type: number
+                      forecast:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            date:
+                              type: string
+                              format: date
+                            predictedRevenue:
+                              $ref: '#/components/schemas/Money'
+                            confidence:
+                              type: number
+                              format: float
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  # ========================================
+  # REPORTS API - Client Reports
+  # ========================================
+  /api/reports/clients/demographics:
+    get:
+      tags:
+        - Reports - Clients
+      summary: Get client demographics report
+      description: |
+        Analyzes client base demographics:
+        - Geographic distribution
+        - Customer segments
+        - Booking preferences
+        - Market composition
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      byCountry:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            country:
+                              type: string
+                              example: "United States"
+                            clientCount:
+                              type: integer
+                            revenue:
+                              $ref: '#/components/schemas/Money'
+                            averageBookingValue:
+                              $ref: '#/components/schemas/Money'
+                      bySegment:
+                        type: object
+                        properties:
+                          corporate:
+                            type: integer
+                          leisure:
+                            type: integer
+                          vip:
+                            type: integer
+                      preferredDestinations:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            destination:
+                              type: string
+                            popularity:
+                              type: number
+                              format: float
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  /api/reports/clients/lifetime-value:
+    get:
+      tags:
+        - Reports - Clients
+      summary: Get client lifetime value report
+      description: |
+        Calculates and ranks clients by lifetime value:
+        - Total revenue per client
+        - Number of bookings
+        - Average order value
+        - Client tenure and loyalty metrics
+      parameters:
+        - $ref: '#/components/parameters/LimitParam'
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [lifetime_value, booking_count, recent_activity]
+            default: lifetime_value
+          description: Sort order for client list
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        clientId:
+                          type: integer
+                        clientName:
+                          type: string
+                        email:
+                          type: string
+                        lifetimeValue:
+                          $ref: '#/components/schemas/Money'
+                        totalBookings:
+                          type: integer
+                        averageBookingValue:
+                          $ref: '#/components/schemas/Money'
+                        firstBookingDate:
+                          type: string
+                          format: date
+                        lastBookingDate:
+                          type: string
+                          format: date
+                        tenureDays:
+                          type: integer
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  /api/reports/clients/acquisition-retention:
+    get:
+      tags:
+        - Reports - Clients
+      summary: Get client acquisition and retention report
+      description: |
+        Tracks client acquisition and retention metrics:
+        - New vs returning clients
+        - Retention rates
+        - Churn analysis
+        - Acquisition channels
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+        - $ref: '#/components/parameters/ComparisonParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      newClients:
+                        type: integer
+                      returningClients:
+                        type: integer
+                      retentionRate:
+                        type: number
+                        format: float
+                        description: Percentage of clients who made repeat bookings
+                        example: 0.42
+                      churnRate:
+                        type: number
+                        format: float
+                      averageClientsPerMonth:
+                        type: number
+                        format: float
+                      acquisitionTrends:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            date:
+                              type: string
+                              format: date
+                            newClients:
+                              type: integer
+                            returningClients:
+                              type: integer
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  # ========================================
+  # REPORTS API - Agent Reports
+  # ========================================
+  /api/reports/agents/performance:
+    get:
+      tags:
+        - Reports - Agents
+      summary: Get tour operator/agent performance report
+      description: |
+        Evaluates agent performance metrics:
+        - Revenue generated per agent
+        - Booking counts and conversion rates
+        - Average deal size
+        - Commission earnings
+        - Performance rankings
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: sort
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [revenue, bookings, conversion_rate, commission]
+            default: revenue
+          description: Sort order for agent rankings
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        agentId:
+                          type: integer
+                        agentName:
+                          type: string
+                        totalRevenue:
+                          $ref: '#/components/schemas/Money'
+                        totalBookings:
+                          type: integer
+                        conversionRate:
+                          type: number
+                          format: float
+                        averageDealSize:
+                          $ref: '#/components/schemas/Money'
+                        totalCommission:
+                          $ref: '#/components/schemas/Money'
+                        activeClients:
+                          type: integer
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  /api/reports/agents/clients:
+    get:
+      tags:
+        - Reports - Agents
+      summary: Get agent client portfolio report
+      description: |
+        Shows client distribution across agents:
+        - Clients per agent
+        - Portfolio value
+        - Client satisfaction metrics
+        - Territory coverage
+      parameters:
+        - name: agent_id
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: Filter by specific agent ID
+        - $ref: '#/components/parameters/PeriodParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        agentId:
+                          type: integer
+                        agentName:
+                          type: string
+                        totalClients:
+                          type: integer
+                        activeClients:
+                          type: integer
+                        portfolioValue:
+                          $ref: '#/components/schemas/Money'
+                        averageClientValue:
+                          $ref: '#/components/schemas/Money'
+                        topClients:
+                          type: array
+                          items:
+                            type: object
+                            properties:
+                              clientName:
+                                type: string
+                              revenue:
+                                $ref: '#/components/schemas/Money'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  # ========================================
+  # REPORTS API - Financial Reports
+  # ========================================
+  /api/reports/financial/dashboard:
+    get:
+      tags:
+        - Reports - Financial
+      summary: Get financial dashboard overview
+      description: |
+        Comprehensive financial overview including:
+        - Revenue and profitability metrics
+        - Cash flow indicators
+        - Outstanding receivables and payables
+        - Key financial ratios
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+        - $ref: '#/components/parameters/ComparisonParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      revenue:
+                        type: object
+                        properties:
+                          total:
+                            $ref: '#/components/schemas/Money'
+                          received:
+                            $ref: '#/components/schemas/Money'
+                          outstanding:
+                            $ref: '#/components/schemas/Money'
+                      expenses:
+                        type: object
+                        properties:
+                          total:
+                            $ref: '#/components/schemas/Money'
+                          paid:
+                            $ref: '#/components/schemas/Money'
+                          outstanding:
+                            $ref: '#/components/schemas/Money'
+                      profitability:
+                        type: object
+                        properties:
+                          grossProfit:
+                            $ref: '#/components/schemas/Money'
+                          grossMargin:
+                            type: number
+                            format: float
+                          netProfit:
+                            $ref: '#/components/schemas/Money'
+                          netMargin:
+                            type: number
+                            format: float
+                      cashFlow:
+                        type: object
+                        properties:
+                          operatingCashFlow:
+                            $ref: '#/components/schemas/Money'
+                          daysReceivableOutstanding:
+                            type: number
+                            format: float
+                          daysPayableOutstanding:
+                            type: number
+                            format: float
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  /api/reports/financial/profit-loss:
+    get:
+      tags:
+        - Reports - Financial
+      summary: Get profit and loss statement
+      description: |
+        Detailed P&L statement with:
+        - Revenue breakdown by category
+        - Cost of goods sold
+        - Operating expenses
+        - Net income calculation
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+        - name: format
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [summary, detailed]
+            default: summary
+          description: Level of detail in the report
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      period:
+                        $ref: '#/components/schemas/Period'
+                      revenue:
+                        type: object
+                        properties:
+                          tourRevenue:
+                            $ref: '#/components/schemas/Money'
+                          serviceRevenue:
+                            $ref: '#/components/schemas/Money'
+                          otherRevenue:
+                            $ref: '#/components/schemas/Money'
+                          totalRevenue:
+                            $ref: '#/components/schemas/Money'
+                      costOfGoodsSold:
+                        type: object
+                        properties:
+                          supplierCosts:
+                            $ref: '#/components/schemas/Money'
+                          directCosts:
+                            $ref: '#/components/schemas/Money'
+                          totalCOGS:
+                            $ref: '#/components/schemas/Money'
+                      grossProfit:
+                        $ref: '#/components/schemas/Money'
+                      operatingExpenses:
+                        type: object
+                        properties:
+                          salaries:
+                            $ref: '#/components/schemas/Money'
+                          commissions:
+                            $ref: '#/components/schemas/Money'
+                          marketing:
+                            $ref: '#/components/schemas/Money'
+                          overhead:
+                            $ref: '#/components/schemas/Money'
+                          totalOpEx:
+                            $ref: '#/components/schemas/Money'
+                      netIncome:
+                        $ref: '#/components/schemas/Money'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  /api/reports/financial/aging:
+    get:
+      tags:
+        - Reports - Financial
+      summary: Get accounts aging report
+      description: |
+        Analyzes aging of receivables and payables:
+        - Current, 30, 60, 90+ day buckets
+        - Outstanding amounts by age
+        - Collection risk assessment
+        - Payment priority recommendations
+      parameters:
+        - name: type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [receivable, payable, both]
+            default: both
+          description: Type of aging report
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      receivables:
+                        type: object
+                        properties:
+                          current:
+                            $ref: '#/components/schemas/Money'
+                          days_1_30:
+                            $ref: '#/components/schemas/Money'
+                          days_31_60:
+                            $ref: '#/components/schemas/Money'
+                          days_61_90:
+                            $ref: '#/components/schemas/Money'
+                          days_90_plus:
+                            $ref: '#/components/schemas/Money'
+                          total:
+                            $ref: '#/components/schemas/Money'
+                      payables:
+                        type: object
+                        properties:
+                          current:
+                            $ref: '#/components/schemas/Money'
+                          days_1_30:
+                            $ref: '#/components/schemas/Money'
+                          days_31_60:
+                            $ref: '#/components/schemas/Money'
+                          days_61_90:
+                            $ref: '#/components/schemas/Money'
+                          days_90_plus:
+                            $ref: '#/components/schemas/Money'
+                          total:
+                            $ref: '#/components/schemas/Money'
+                      details:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            invoiceNumber:
+                              type: string
+                            customerName:
+                              type: string
+                            amount:
+                              $ref: '#/components/schemas/Money'
+                            daysOutstanding:
+                              type: integer
+                            dueDate:
+                              type: string
+                              format: date
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  /api/reports/financial/providers:
+    get:
+      tags:
+        - Reports - Financial
+      summary: Get provider spending analysis
+      description: |
+        Analyzes spending with providers/suppliers:
+        - Total spending per provider
+        - Payment terms and history
+        - Discount opportunities
+        - Vendor concentration risk
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: provider_type
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by provider type (hotel, guide, vehicle, etc.)
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        providerId:
+                          type: integer
+                        providerName:
+                          type: string
+                        providerType:
+                          type: string
+                        totalSpent:
+                          $ref: '#/components/schemas/Money'
+                        transactionCount:
+                          type: integer
+                        averageTransactionSize:
+                          $ref: '#/components/schemas/Money'
+                        outstandingBalance:
+                          $ref: '#/components/schemas/Money'
+                        paymentTermsDays:
+                          type: integer
+                        onTimePaymentRate:
+                          type: number
+                          format: float
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  /api/reports/financial/commissions:
+    get:
+      tags:
+        - Reports - Financial
+      summary: Get commission tracking report
+      description: |
+        Tracks agent commissions and payouts:
+        - Earned commissions by agent
+        - Paid vs unpaid commissions
+        - Commission rates and structures
+        - Payout schedule tracking
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, earned, paid, pending]
+            default: all
+          description: Filter by commission payment status
+        - name: agent_id
+          in: query
+          required: false
+          schema:
+            type: integer
+          description: Filter by specific agent
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      summary:
+                        type: object
+                        properties:
+                          totalEarned:
+                            $ref: '#/components/schemas/Money'
+                          totalPaid:
+                            $ref: '#/components/schemas/Money'
+                          totalPending:
+                            $ref: '#/components/schemas/Money'
+                      byAgent:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            agentId:
+                              type: integer
+                            agentName:
+                              type: string
+                            earnedCommissions:
+                              $ref: '#/components/schemas/Money'
+                            paidCommissions:
+                              $ref: '#/components/schemas/Money'
+                            pendingCommissions:
+                              $ref: '#/components/schemas/Money'
+                            commissionRate:
+                              type: number
+                              format: float
+                            lastPayoutDate:
+                              type: string
+                              format: date
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  # ========================================
+  # REPORTS API - Operations Reports
+  # ========================================
+  /api/reports/operations/upcoming-tours:
+    get:
+      tags:
+        - Reports - Operations
+      summary: Get upcoming tours schedule
+      description: |
+        Lists and analyzes upcoming tour operations:
+        - Tours by date range
+        - Resource requirements
+        - Capacity utilization
+        - Operational readiness
+      parameters:
+        - name: days_ahead
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 365
+            default: 30
+          description: Number of days to look ahead
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, confirmed, pending]
+            default: all
+          description: Filter by tour status
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        tourId:
+                          type: integer
+                        tourName:
+                          type: string
+                        clientName:
+                          type: string
+                        startDate:
+                          type: string
+                          format: date
+                        endDate:
+                          type: string
+                          format: date
+                        destination:
+                          type: string
+                        groupSize:
+                          type: integer
+                        status:
+                          type: string
+                          enum: [confirmed, pending, cancelled]
+                        assignedGuide:
+                          type: string
+                        assignedVehicle:
+                          type: string
+                        totalRevenue:
+                          $ref: '#/components/schemas/Money'
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  /api/reports/operations/capacity:
+    get:
+      tags:
+        - Reports - Operations
+      summary: Get resource capacity utilization
+      description: |
+        Analyzes capacity and resource utilization:
+        - Guide availability and booking rates
+        - Vehicle utilization
+        - Hotel room night usage
+        - Capacity constraints and bottlenecks
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+        - name: resource_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, guides, vehicles, hotels]
+            default: all
+          description: Filter by resource type
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      guides:
+                        type: object
+                        properties:
+                          totalGuides:
+                            type: integer
+                          averageUtilization:
+                            type: number
+                            format: float
+                            description: Percentage of time guides are booked
+                          byGuide:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                guideName:
+                                  type: string
+                                totalDays:
+                                  type: integer
+                                bookedDays:
+                                  type: integer
+                                utilizationRate:
+                                  type: number
+                                  format: float
+                      vehicles:
+                        type: object
+                        properties:
+                          totalVehicles:
+                            type: integer
+                          averageUtilization:
+                            type: number
+                            format: float
+                          byVehicle:
+                            type: array
+                            items:
+                              type: object
+                              properties:
+                                vehicleType:
+                                  type: string
+                                totalDays:
+                                  type: integer
+                                bookedDays:
+                                  type: integer
+                                utilizationRate:
+                                  type: number
+                                  format: float
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  /api/reports/operations/service-usage:
+    get:
+      tags:
+        - Reports - Operations
+      summary: Get service and supplier usage statistics
+      description: |
+        Tracks usage of services and suppliers:
+        - Most frequently used hotels, guides, vehicles
+        - Service booking patterns
+        - Supplier performance metrics
+        - Cost efficiency analysis
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+        - $ref: '#/components/parameters/LimitParam'
+        - name: service_type
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, hotels, guides, vehicles, restaurants, tours]
+            default: all
+          description: Filter by service type
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        serviceId:
+                          type: integer
+                        serviceName:
+                          type: string
+                        serviceType:
+                          type: string
+                        providerName:
+                          type: string
+                        bookingCount:
+                          type: integer
+                        totalRevenue:
+                          $ref: '#/components/schemas/Money'
+                        averageCost:
+                          $ref: '#/components/schemas/Money'
+                        utilizationRate:
+                          type: number
+                          format: float
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  /api/reports/operations/response-times:
+    get:
+      tags:
+        - Reports - Operations
+      summary: Get operational response time metrics
+      description: |
+        Measures operational efficiency through response times:
+        - Quote generation time
+        - Request handling speed
+        - Booking confirmation time
+        - Customer inquiry response rates
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      averageQuoteTime:
+                        type: number
+                        description: Average hours to generate quote
+                        example: 4.5
+                      averageResponseTime:
+                        type: number
+                        description: Average hours to respond to inquiry
+                        example: 2.3
+                      averageConfirmationTime:
+                        type: number
+                        description: Average hours to confirm booking
+                        example: 6.8
+                      trends:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            date:
+                              type: string
+                              format: date
+                            averageResponseTime:
+                              type: number
+                      slaCompliance:
+                        type: number
+                        format: float
+                        description: Percentage meeting service level agreements
+                        example: 0.87
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  /api/reports/operations/booking-status:
+    get:
+      tags:
+        - Reports - Operations
+      summary: Get booking status pipeline report
+      description: |
+        Tracks bookings through operational pipeline:
+        - Bookings by status (confirmed, pending, cancelled)
+        - Pipeline velocity
+        - Bottleneck identification
+        - Completion rates
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      byStatus:
+                        type: object
+                        properties:
+                          confirmed:
+                            type: integer
+                          pending:
+                            type: integer
+                          cancelled:
+                            type: integer
+                          draft:
+                            type: integer
+                      conversionFunnel:
+                        type: object
+                        properties:
+                          inquiries:
+                            type: integer
+                          quotes:
+                            type: integer
+                          bookings:
+                            type: integer
+                          conversions:
+                            type: integer
+                      cancellationRate:
+                        type: number
+                        format: float
+                      averageTimeToConfirmation:
+                        type: number
+                        description: Average days from inquiry to confirmation
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  # ========================================
+  # REPORTS API - Pricing Reports
+  # ========================================
+  /api/reports/pricing/analysis:
+    get:
+      tags:
+        - Reports - Pricing
+      summary: Get pricing analysis and competitiveness
+      description: |
+        Analyzes pricing strategies and market position:
+        - Average pricing by destination and service
+        - Price elasticity insights
+        - Win/loss analysis by price point
+        - Competitive positioning
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+        - name: destination
+          in: query
+          required: false
+          schema:
+            type: string
+          description: Filter by destination
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      averagePricePerPerson:
+                        $ref: '#/components/schemas/Money'
+                      averagePricePerDay:
+                        $ref: '#/components/schemas/Money'
+                      priceRanges:
+                        type: object
+                        properties:
+                          budget:
+                            type: object
+                            properties:
+                              range:
+                                type: string
+                                example: "$0-$1000"
+                              bookings:
+                                type: integer
+                              revenue:
+                                $ref: '#/components/schemas/Money'
+                          midRange:
+                            type: object
+                            properties:
+                              range:
+                                type: string
+                              bookings:
+                                type: integer
+                              revenue:
+                                $ref: '#/components/schemas/Money'
+                          luxury:
+                            type: object
+                            properties:
+                              range:
+                                type: string
+                              bookings:
+                                type: integer
+                              revenue:
+                                $ref: '#/components/schemas/Money'
+                      byDestination:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            destination:
+                              type: string
+                            averagePrice:
+                              $ref: '#/components/schemas/Money'
+                            bookings:
+                              type: integer
+                            acceptanceRate:
+                              type: number
+                              format: float
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+  /api/reports/pricing/cost-structure:
+    get:
+      tags:
+        - Reports - Pricing
+      summary: Get cost structure and margin analysis
+      description: |
+        Breaks down costs and margins by component:
+        - Cost breakdown (hotels, guides, vehicles, etc.)
+        - Markup and margin analysis
+        - Profitability by service type
+        - Cost optimization opportunities
+      parameters:
+        - $ref: '#/components/parameters/PeriodParam'
+        - name: breakdown_by
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [service_type, destination, package]
+            default: service_type
+          description: How to breakdown the cost analysis
+      responses:
+        '200':
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: object
+                    properties:
+                      overallMargin:
+                        type: number
+                        format: float
+                        description: Overall profit margin percentage
+                        example: 0.28
+                      costBreakdown:
+                        type: object
+                        properties:
+                          hotels:
+                            type: object
+                            properties:
+                              totalCost:
+                                $ref: '#/components/schemas/Money'
+                              percentageOfTotal:
+                                type: number
+                                format: float
+                          guides:
+                            type: object
+                            properties:
+                              totalCost:
+                                $ref: '#/components/schemas/Money'
+                              percentageOfTotal:
+                                type: number
+                                format: float
+                          vehicles:
+                            type: object
+                            properties:
+                              totalCost:
+                                $ref: '#/components/schemas/Money'
+                              percentageOfTotal:
+                                type: number
+                                format: float
+                          other:
+                            type: object
+                            properties:
+                              totalCost:
+                                $ref: '#/components/schemas/Money'
+                              percentageOfTotal:
+                                type: number
+                                format: float
+                      marginAnalysis:
+                        type: array
+                        items:
+                          type: object
+                          properties:
+                            category:
+                              type: string
+                            revenue:
+                              $ref: '#/components/schemas/Money'
+                            cost:
+                              $ref: '#/components/schemas/Money'
+                            margin:
+                              type: number
+                              format: float
+                            markup:
+                              type: number
+                              format: float
+        '400':
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '401':
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Error'
+      security:
+        - TenantId: []
+
+security:
+  - TenantId: []

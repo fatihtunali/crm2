@@ -1,3 +1,5 @@
+import type { Money } from '@/types/api';
+
 interface Request {
   id: number;
   customer_name: string;
@@ -8,8 +10,8 @@ interface Request {
   end_date: string;
   adults: number;
   children: number;
-  total_price: string;
-  price_per_person: string;
+  total_price: Money;
+  price_per_person: Money;
   status: string;
   tour_type: string | null;
   hotel_category: string | null;
@@ -113,10 +115,10 @@ export default function RequestTable({
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">
                   <div className="text-sm font-semibold text-gray-900">
-                    €{parseFloat(request.total_price).toLocaleString('en-US', { minimumFractionDigits: 2 })}
+                    €{((request.total_price?.amount_minor || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })}
                   </div>
                   <div className="text-xs text-gray-500">
-                    €{parseFloat(request.price_per_person).toLocaleString('en-US', { minimumFractionDigits: 2 })} pp
+                    €{((request.price_per_person?.amount_minor || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2 })} pp
                   </div>
                 </td>
                 <td className="px-6 py-4 whitespace-nowrap">

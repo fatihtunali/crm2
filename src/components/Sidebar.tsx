@@ -7,9 +7,18 @@ import { useState } from 'react';
 const navigation = [
   { name: 'Dashboard', href: '/', icon: '📊' },
   { name: 'Requests', href: '/requests', icon: '📬' },
-  { name: 'Agents', href: '/agents', icon: '👥' },
   { name: 'Quotations', href: '/quotations', icon: '💰' },
   { name: 'Bookings', href: '/bookings', icon: '📅' },
+  { name: 'Tour Operators', href: '/agents', icon: '🏢' },
+  {
+    name: 'Clients',
+    href: '/clients',
+    icon: '👥',
+    subItems: [
+      { name: 'Direct Clients', href: '/clients/direct', icon: '👤' },
+      { name: 'Agent Clients', href: '/clients/agent', icon: '👥' },
+    ]
+  },
   {
     name: 'Suppliers',
     href: '/suppliers',
@@ -33,7 +42,7 @@ const navigation = [
 
 export default function Sidebar() {
   const pathname = usePathname();
-  const [expandedItems, setExpandedItems] = useState<string[]>(['Suppliers']);
+  const [expandedItems, setExpandedItems] = useState<string[]>(['Clients', 'Suppliers']);
 
   const toggleExpand = (itemName: string) => {
     setExpandedItems(prev =>

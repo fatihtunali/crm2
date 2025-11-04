@@ -23,7 +23,17 @@
       "Bash(dir \"C:\\Users\\fatih\\Desktop\\crm2\\src\\app\\api\\hotels\" /s /b 2)",
       "Bash(nul)",
       "Bash(NUL)",
-      "Bash(dir:*)"
+      "Bash(dir:*)",
+      "Bash(tee:*)",
+      "Bash(NODE_OPTIONS=\"--trace-warnings\" npm run build:*)",
+      "Bash(export NODE_OPTIONS=\"--trace-warnings\")",
+      "Bash(find:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(for:*)",
+      "Bash(do netstat -ano)",
+      "Bash(awk:*)",
+      "Bash(xargs -r taskkill //PID //F 2)",
+      "Bash(done)"
     ],
     "deny": [],
     "ask": []

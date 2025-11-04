@@ -4,16 +4,16 @@ import { successResponse, errorResponse, notFoundProblem, internalServerErrorPro
 import { requireTenant } from '@/middleware/tenancy';
 
 interface RouteParams {
-  params: {
+  params: Promise<{
     id: string;
-  };
+  }>;
 }
 
 /**
  * GET /api/clients/[id]
  * Get a single client by ID
  */
-export async function GET(request: NextRequest, { params }: RouteParams) {
+export async function GET(request: NextRequest, context: RouteParams) {
   try {
     // Require tenant
     const tenantResult = requireTenant(request);
@@ -22,7 +22,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     }
     const { tenantId } = tenantResult;
 
-    const clientId = params.id;
+    const { id: clientId } = await context.params;
 
     // Fetch client
     const [client] = await query(
@@ -31,7 +31,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
     ) as any[];
 
     if (!client) {
-      return errorResponse(notFoundProblem('Client', clientId, request.url));
+      return errorResponse(notFoundProblem(`Client ${clientId} not found`, request.url));
     }
 
     return successResponse(client);
@@ -45,7 +45,7 @@ export async function GET(request: NextRequest, { params }: RouteParams) {
  * PUT /api/clients/[id]
  * Update a client
  */
-export async function PUT(request: NextRequest, { params }: RouteParams) {
+export async function PUT(request: NextRequest, context: RouteParams) {
   try {
     // Require tenant
     const tenantResult = requireTenant(request);
@@ -54,7 +54,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     }
     const { tenantId } = tenantResult;
 
-    const clientId = params.id;
+    const { id: clientId } = await context.params;
     const body = await request.json();
 
     // Check if client exists
@@ -64,7 +64,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
     ) as any[];
 
     if (!existingClient) {
-      return errorResponse(notFoundProblem('Client', clientId, request.url));
+      return errorResponse(notFoundProblem(`Client ${clientId} not found`, request.url));
     }
 
     const {
@@ -161,7 +161,7 @@ export async function PUT(request: NextRequest, { params }: RouteParams) {
  * DELETE /api/clients/[id]
  * Delete a client
  */
-export async function DELETE(request: NextRequest, { params }: RouteParams) {
+export async function DELETE(request: NextRequest, context: RouteParams) {
   try {
     // Require tenant
     const tenantResult = requireTenant(request);
@@ -170,7 +170,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     }
     const { tenantId } = tenantResult;
 
-    const clientId = params.id;
+    const { id: clientId } = await context.params;
 
     // Check if client exists
     const [existingClient] = await query(
@@ -179,7 +179,7 @@ export async function DELETE(request: NextRequest, { params }: RouteParams) {
     ) as any[];
 
     if (!existingClient) {
-      return errorResponse(notFoundProblem('Client', clientId, request.url));
+      return errorResponse(notFoundProblem(`Client ${clientId} not found`, request.url));
     }
 
     // Delete client

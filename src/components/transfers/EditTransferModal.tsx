@@ -66,14 +66,15 @@ export default function EditTransferModal({ isOpen, onClose, onSuccess, transfer
   const [formError, setFormError] = useState('');
 
   useEffect(() => {
+    if (organizationId == null) return;
     fetchProviders();
-  }, []);
+  }, [organizationId]);
 
   useEffect(() => {
-    if (isOpen) {
+    if (isOpen && organizationId != null) {
       fetchVehicles();
     }
-  }, [isOpen]);
+  }, [isOpen, organizationId]);
 
   useEffect(() => {
     if (transfer) {
@@ -96,10 +97,11 @@ export default function EditTransferModal({ isOpen, onClose, onSuccess, transfer
   }, [transfer]);
 
   async function fetchProviders() {
+    if (organizationId == null) return;
     try {
       const res = await fetch('/api/providers?limit=1000', {
         headers: {
-          'X-Tenant-Id': organizationId
+          'X-Tenant-Id': organizationId.toString()
         }
       });
       const data = await res.json();
@@ -111,10 +113,11 @@ export default function EditTransferModal({ isOpen, onClose, onSuccess, transfer
   }
 
   async function fetchVehicles() {
+    if (organizationId == null) return;
     try {
       const res = await fetch('/api/vehicles?limit=1000', {
         headers: {
-          'X-Tenant-Id': organizationId
+          'X-Tenant-Id': organizationId.toString()
         }
       });
       const data = await res.json();
@@ -178,9 +181,18 @@ export default function EditTransferModal({ isOpen, onClose, onSuccess, transfer
         return;
       }
 
+      if (organizationId == null) {
+        setFormError('Unable to determine organization context. Please refresh and try again.');
+        setFormSubmitting(false);
+        return;
+      }
+
       const res = await fetch('/api/transfers', {
         method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': organizationId.toString()
+        },
         body: JSON.stringify({
           id: formData.id,
           provider_id: formData.provider_id,
@@ -228,7 +240,14 @@ export default function EditTransferModal({ isOpen, onClose, onSuccess, transfer
       <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
         <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between">
           <h2 className="text-xl font-bold text-gray-900">Edit Intercity Transfer</h2>
-          <button onClick={onClose} className="text-gray-400 hover:text-gray-600" disabled={formSubmitting}>✕</button>
+          <button
+            onClick={onClose}
+            className="text-gray-400 hover:text-gray-600"
+            disabled={formSubmitting}
+            aria-label="Close"
+          >
+            &times;
+          </button>
         </div>
         <form onSubmit={handleSubmit}>
           <div className="p-6">

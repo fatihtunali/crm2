@@ -12,6 +12,10 @@ export async function GET(request: NextRequest) {
     }
     const { tenantId } = tenantResult;
 
+    const { searchParams } = new URL(request.url);
+    const period = searchParams.get('period') || 'this_quarter';
+    const { startDate, endDate } = calculateDateRange(period);
+
     // Receivables summary
     const [receivablesResult] = await query(`
       SELECT
@@ -19,8 +23,8 @@ export async function GET(request: NextRequest) {
         SUM(paid_amount) as paid,
         SUM(total_amount - paid_amount) as outstanding,
         COUNT(*) as invoice_count,
-        COUNT(CASE WHEN status = 'paid' THEN 1 END) as paid_count,
-        COUNT(CASE WHEN status = 'overdue' THEN 1 END) as overdue_count
+        COUNT(CASE WHEN ir.status = 'paid' THEN 1 END) as paid_count,
+        COUNT(CASE WHEN ir.status = 'overdue' THEN 1 END) as overdue_count
       FROM invoices_receivable ir
       JOIN quotes q ON ir.booking_id = q.id
       WHERE q.organization_id = ?
@@ -33,8 +37,8 @@ export async function GET(request: NextRequest) {
         SUM(paid_amount) as paid,
         SUM(total_amount - paid_amount) as outstanding,
         COUNT(*) as invoice_count,
-        COUNT(CASE WHEN status = 'paid' THEN 1 END) as paid_count,
-        COUNT(CASE WHEN status = 'overdue' THEN 1 END) as overdue_count
+        COUNT(CASE WHEN ip.status = 'paid' THEN 1 END) as paid_count,
+        COUNT(CASE WHEN ip.status = 'overdue' THEN 1 END) as overdue_count
       FROM invoices_payable ip
       JOIN quotes q ON ip.booking_id = q.id
       WHERE q.organization_id = ?
@@ -87,61 +91,77 @@ export async function GET(request: NextRequest) {
     // Monthly revenue and costs trend
     const monthlyTrend = await query(`
       SELECT
-        DATE_FORMAT(invoice_date, '%Y-%m') as month,
-        SUM(total_amount) as receivables,
-        (SELECT SUM(total_amount)
-         FROM invoices_payable ip2
-         JOIN quotes q2 ON ip2.booking_id = q2.id
-         WHERE q2.organization_id = ?
-         AND DATE_FORMAT(ip2.invoice_date, '%Y-%m') = DATE_FORMAT(ir.invoice_date, '%Y-%m')) as payables
-      FROM invoices_receivable ir
-      JOIN quotes q ON ir.booking_id = q.id
-      WHERE q.organization_id = ?
-      AND ir.invoice_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
-      GROUP BY DATE_FORMAT(invoice_date, '%Y-%m')
+        month,
+        COALESCE(SUM(receivables), 0) as receivables,
+        COALESCE(SUM(payables), 0) as payables
+      FROM (
+        SELECT
+          DATE_FORMAT(ir.invoice_date, '%Y-%m') as month,
+          ir.total_amount as receivables,
+          0 as payables
+        FROM invoices_receivable ir
+        JOIN quotes q ON ir.booking_id = q.id
+        WHERE q.organization_id = ?
+        AND ir.invoice_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+
+        UNION ALL
+
+        SELECT
+          DATE_FORMAT(ip.invoice_date, '%Y-%m') as month,
+          0 as receivables,
+          ip.total_amount as payables
+        FROM invoices_payable ip
+        JOIN quotes q2 ON ip.booking_id = q2.id
+        WHERE q2.organization_id = ?
+        AND ip.invoice_date >= DATE_SUB(CURDATE(), INTERVAL 12 MONTH)
+      ) combined
+      GROUP BY month
       ORDER BY month DESC
       LIMIT 12
     `, [parseInt(tenantId), parseInt(tenantId)]) as any[];
 
+    // Calculate summary metrics
+    const totalTurnover = parseFloat(receivablesResult?.total || 0);
+    const totalCosts = parseFloat(payablesResult?.total || 0);
+    const grossProfit = totalTurnover - totalCosts;
+    const grossMargin = totalTurnover > 0 ? (grossProfit / totalTurnover) * 100 : 0;
+
     const data = {
+      period: {
+        start_date: startDate,
+        end_date: endDate
+      },
+      summary: {
+        totalTurnover: createMoney(totalTurnover, 'EUR'),
+        totalCosts: createMoney(totalCosts, 'EUR'),
+        grossProfit: createMoney(grossProfit, 'EUR'),
+        grossMargin: Math.round(grossMargin * 100) / 100,
+        netProfit: createMoney(grossProfit, 'EUR'), // Simplified: same as gross profit
+        netMargin: Math.round(grossMargin * 100) / 100 // Simplified: same as gross margin
+      },
       receivables: {
-        total: createMoney(parseFloat(receivablesResult?.total || 0), 'EUR'),
-        paid: createMoney(parseFloat(receivablesResult?.paid || 0), 'EUR'),
-        outstanding: createMoney(parseFloat(receivablesResult?.outstanding || 0), 'EUR'),
-        invoiceCount: parseInt(receivablesResult?.invoice_count || 0),
-        paidCount: parseInt(receivablesResult?.paid_count || 0),
-        overdueCount: parseInt(receivablesResult?.overdue_count || 0)
+        total: createMoney(parseFloat(receivablesResult?.outstanding || 0), 'EUR'),
+        current: createMoney(parseFloat(receivablesAging?.current || 0), 'EUR'),
+        days30to60: createMoney(parseFloat(receivablesAging?.days_31_60 || 0), 'EUR'),
+        days60plus: createMoney(
+          parseFloat(receivablesAging?.days_61_90 || 0) + parseFloat(receivablesAging?.days_90_plus || 0),
+          'EUR'
+        )
       },
       payables: {
-        total: createMoney(parseFloat(payablesResult?.total || 0), 'EUR'),
-        paid: createMoney(parseFloat(payablesResult?.paid || 0), 'EUR'),
-        outstanding: createMoney(parseFloat(payablesResult?.outstanding || 0), 'EUR'),
-        invoiceCount: parseInt(payablesResult?.invoice_count || 0),
-        paidCount: parseInt(payablesResult?.paid_count || 0),
-        overdueCount: parseInt(payablesResult?.overdue_count || 0)
-      },
-      netPosition: createMoney(
-        parseFloat(receivablesResult?.outstanding || 0) - parseFloat(payablesResult?.outstanding || 0),
-        'EUR'
-      ),
-      receivablesAging: {
-        current: createMoney(parseFloat(receivablesAging?.current || 0), 'EUR'),
-        days1To30: createMoney(parseFloat(receivablesAging?.days_1_30 || 0), 'EUR'),
-        days31To60: createMoney(parseFloat(receivablesAging?.days_31_60 || 0), 'EUR'),
-        days61To90: createMoney(parseFloat(receivablesAging?.days_61_90 || 0), 'EUR'),
-        days90Plus: createMoney(parseFloat(receivablesAging?.days_90_plus || 0), 'EUR')
-      },
-      payablesAging: {
+        total: createMoney(parseFloat(payablesResult?.outstanding || 0), 'EUR'),
         current: createMoney(parseFloat(payablesAging?.current || 0), 'EUR'),
-        days1To30: createMoney(parseFloat(payablesAging?.days_1_30 || 0), 'EUR'),
-        days31To60: createMoney(parseFloat(payablesAging?.days_31_60 || 0), 'EUR'),
-        days61To90: createMoney(parseFloat(payablesAging?.days_61_90 || 0), 'EUR'),
-        days90Plus: createMoney(parseFloat(payablesAging?.days_90_plus || 0), 'EUR')
+        days30to60: createMoney(parseFloat(payablesAging?.days_31_60 || 0), 'EUR'),
+        days60plus: createMoney(
+          parseFloat(payablesAging?.days_61_90 || 0) + parseFloat(payablesAging?.days_90_plus || 0),
+          'EUR'
+        )
       },
-      cashFlow30Days: {
-        expectedReceivables: createMoney(parseFloat(cashFlowResult?.expected_receivables || 0), 'EUR'),
-        expectedPayables: createMoney(parseFloat(cashFlowResult?.expected_payables || 0), 'EUR'),
-        netCashFlow: createMoney(
+      cashFlow: {
+        opening: createMoney(0, 'EUR'), // Not tracked currently
+        inflows: createMoney(parseFloat(cashFlowResult?.expected_receivables || 0), 'EUR'),
+        outflows: createMoney(parseFloat(cashFlowResult?.expected_payables || 0), 'EUR'),
+        closing: createMoney(
           parseFloat(cashFlowResult?.expected_receivables || 0) - parseFloat(cashFlowResult?.expected_payables || 0),
           'EUR'
         )
@@ -159,4 +179,35 @@ export async function GET(request: NextRequest) {
     console.error('Database error:', error);
     return errorResponse(internalServerErrorProblem(request.url));
   }
+}
+
+function calculateDateRange(period: string) {
+  const now = new Date();
+  let startDate: Date;
+  let endDate: Date = new Date(now);
+
+  switch(period) {
+    case 'this_month':
+      startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+      break;
+    case 'this_quarter':
+      const currentQuarter = Math.floor(now.getMonth() / 3);
+      startDate = new Date(now.getFullYear(), currentQuarter * 3, 1);
+      break;
+    case 'this_year':
+      startDate = new Date(now.getFullYear(), 0, 1);
+      break;
+    case 'last_year':
+      startDate = new Date(now.getFullYear() - 1, 0, 1);
+      endDate = new Date(now.getFullYear() - 1, 11, 31);
+      break;
+    default:
+      const quarter = Math.floor(now.getMonth() / 3);
+      startDate = new Date(now.getFullYear(), quarter * 3, 1);
+  }
+
+  return {
+    startDate: startDate.toISOString().split('T')[0],
+    endDate: endDate.toISOString().split('T')[0]
+  };
 }

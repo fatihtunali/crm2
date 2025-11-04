@@ -23,7 +23,7 @@ export async function GET(request: NextRequest) {
         MAX(TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at)) as max_response_hours,
         COUNT(*) as total_responses
       FROM customer_itineraries ci
-      JOIN quotes q ON ci.customer_email = q.customer_email
+      JOIN quotes q ON ci.customer_email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
       WHERE q.organization_id = ?
       AND q.created_at BETWEEN ? AND ?
       AND ci.created_at < q.created_at
@@ -61,7 +61,7 @@ export async function GET(request: NextRequest) {
         AVG(TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at)) as avg_response_hours,
         COUNT(*) as quote_count
       FROM customer_itineraries ci
-      JOIN quotes q ON ci.customer_email = q.customer_email
+      JOIN quotes q ON ci.customer_email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
       WHERE q.organization_id = ?
       AND q.created_at BETWEEN ? AND ?
       AND ci.created_at < q.created_at
@@ -79,7 +79,7 @@ export async function GET(request: NextRequest) {
         AVG(TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at)) as avg_response_hours,
         COUNT(*) as responses
       FROM customer_itineraries ci
-      JOIN quotes q ON ci.customer_email = q.customer_email
+      JOIN quotes q ON ci.customer_email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
       WHERE q.organization_id = ?
       AND q.created_at BETWEEN ? AND ?
       AND ci.created_at < q.created_at
@@ -100,7 +100,7 @@ export async function GET(request: NextRequest) {
         END as time_range,
         COUNT(*) as count
       FROM customer_itineraries ci
-      JOIN quotes q ON ci.customer_email = q.customer_email
+      JOIN quotes q ON ci.customer_email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
       WHERE q.organization_id = ?
       AND q.created_at BETWEEN ? AND ?
       AND ci.created_at < q.created_at

@@ -1,3 +1,5 @@
+import type { Money } from '@/types/api';
+
 interface Request {
   id: number;
   customer_name: string;
@@ -8,8 +10,8 @@ interface Request {
   end_date: string;
   adults: number;
   children: number;
-  total_price: string;
-  price_per_person: string;
+  total_price: Money;
+  price_per_person: Money;
   status: string;
   tour_type: string | null;
   hotel_category: string | null;
@@ -27,6 +29,11 @@ interface ViewRequestModalProps {
 
 export default function ViewRequestModal({ isOpen, onClose, onEdit, onQuote, request }: ViewRequestModalProps) {
   if (!isOpen || !request) return null;
+
+  const formatMoney = (money: Money) => {
+    const amount = money.amount_minor / 100;
+    return `€${amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  };
 
   const getStatusColor = (status: string) => {
     switch (status) {
@@ -96,11 +103,11 @@ export default function ViewRequestModal({ isOpen, onClose, onEdit, onQuote, req
             </div>
             <div>
               <h3 className="text-sm font-medium text-gray-500 mb-1">Total Price</h3>
-              <p className="text-lg font-semibold text-gray-900">€{parseFloat(request.total_price).toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+              <p className="text-lg font-semibold text-gray-900">{formatMoney(request.total_price)}</p>
             </div>
             <div>
               <h3 className="text-sm font-medium text-gray-500 mb-1">Price Per Person</h3>
-              <p className="text-lg font-semibold text-gray-900">€{parseFloat(request.price_per_person).toLocaleString('en-US', { minimumFractionDigits: 2 })}</p>
+              <p className="text-lg font-semibold text-gray-900">{formatMoney(request.price_per_person)}</p>
             </div>
             <div>
               <h3 className="text-sm font-medium text-gray-500 mb-1">Source</h3>

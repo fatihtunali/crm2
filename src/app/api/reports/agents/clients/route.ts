@@ -47,7 +47,7 @@ export async function GET(request: NextRequest) {
         AVG(q.adults + q.children) as avg_group_size,
         AVG(DATEDIFF(q.end_date, q.start_date)) as avg_trip_duration
       FROM clients c
-      LEFT JOIN quotes q ON c.email = q.customer_email AND q.status = 'accepted'
+      LEFT JOIN quotes q ON c.email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci AND q.status = 'accepted'
       WHERE c.organization_id = ?
       AND c.tour_operator_id IS NOT NULL
       GROUP BY c.tour_operator_id

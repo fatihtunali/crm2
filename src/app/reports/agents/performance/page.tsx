@@ -160,7 +160,7 @@ export default function AgentPerformancePage() {
     );
   }
 
-  const maxRevenue = Math.max(...data.agents.map(a => a.revenue.amount_minor));
+  const maxRevenue = Math.max(...data.agents.map(a => a.revenue.amount_minor), 1);
 
   return (
     <div className="p-8">

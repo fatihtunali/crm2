@@ -32,7 +32,7 @@ export async function GET(request: NextRequest) {
         MAX(q.start_date) as last_booking_date,
         DATEDIFF(MAX(q.start_date), MIN(q.start_date)) as customer_lifespan_days
       FROM clients c
-      LEFT JOIN quotes q ON c.email = q.customer_email AND q.status = 'accepted'
+      LEFT JOIN quotes q ON c.email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci AND q.status = 'accepted'
       WHERE c.organization_id = ?
       GROUP BY c.id
       HAVING total_bookings > 0
@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
           c.id,
           SUM(q.total_price) as total_revenue
         FROM clients c
-        LEFT JOIN quotes q ON c.email = q.customer_email AND q.status = 'accepted'
+        LEFT JOIN quotes q ON c.email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci AND q.status = 'accepted'
         WHERE c.organization_id = ?
         GROUP BY c.id
         HAVING total_revenue > 0
@@ -69,7 +69,7 @@ export async function GET(request: NextRequest) {
           c.id,
           COUNT(q.id) as booking_count
         FROM clients c
-        LEFT JOIN quotes q ON c.email = q.customer_email AND q.status = 'accepted'
+        LEFT JOIN quotes q ON c.email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci AND q.status = 'accepted'
         WHERE c.organization_id = ?
         GROUP BY c.id
         HAVING booking_count > 0

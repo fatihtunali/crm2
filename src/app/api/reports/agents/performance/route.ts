@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
         AVG(q.total_price) as avg_booking_value,
         COUNT(DISTINCT c.nationality) as countries_served
       FROM clients c
-      LEFT JOIN quotes q ON c.email = q.customer_email
+      LEFT JOIN quotes q ON c.email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
         AND q.status = 'accepted'
         AND q.start_date BETWEEN ? AND ?
       WHERE c.organization_id = ?
@@ -48,7 +48,7 @@ export async function GET(request: NextRequest) {
         COUNT(q.id) as bookings,
         SUM(q.total_price) as revenue
       FROM clients c
-      JOIN quotes q ON c.email = q.customer_email
+      JOIN quotes q ON c.email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
       WHERE c.organization_id = ?
       AND c.tour_operator_id IS NOT NULL
       AND q.status = 'accepted'
@@ -68,7 +68,7 @@ export async function GET(request: NextRequest) {
           THEN TIMESTAMPDIFF(HOUR, q.sent_at, q.updated_at)
         END) as avg_hours_to_close
       FROM clients c
-      LEFT JOIN quotes q ON c.email = q.customer_email
+      LEFT JOIN quotes q ON c.email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
       WHERE c.organization_id = ?
       AND c.tour_operator_id IS NOT NULL
       AND q.created_at BETWEEN ? AND ?
@@ -83,7 +83,7 @@ export async function GET(request: NextRequest) {
         COUNT(q.id) as bookings,
         SUM(q.total_price) as revenue
       FROM clients c
-      JOIN quotes q ON c.email = q.customer_email
+      JOIN quotes q ON c.email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
       WHERE c.organization_id = ?
       AND c.tour_operator_id IS NOT NULL
       AND q.status = 'accepted'

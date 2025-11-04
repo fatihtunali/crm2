@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import type { Money } from '@/types/api';
 
 interface Request {
   id: number;
@@ -10,7 +11,8 @@ interface Request {
   end_date: string;
   adults: number;
   children: number;
-  total_price: string;
+  total_price: Money;
+  price_per_person: Money;
   tour_type: string | null;
   hotel_category: string | null;
   status: string;
@@ -60,7 +62,7 @@ export default function EditRequestModal({ isOpen, onClose, onSuccess, request }
         children: request.children,
         tour_type: request.tour_type || '',
         hotel_category: request.hotel_category || '',
-        total_price: request.total_price,
+        total_price: (request.total_price.amount_minor / 100).toFixed(2),
         special_requests: '',
         status: request.status
       });

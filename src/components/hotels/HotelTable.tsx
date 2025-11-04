@@ -109,8 +109,9 @@ export default function HotelTable({
   };
 
   const getStarRating = (rating: number | null) => {
-    if (!rating) return '';
-    return '⭐'.repeat(rating);
+    if (!rating || rating < 0 || rating > 5) return '';
+    const count = Math.max(0, Math.min(5, Math.floor(rating)));
+    return Array(count).fill('⭐').join('');
   };
 
   const formatPrice = (price: number | null, currency: string = 'EUR') => {

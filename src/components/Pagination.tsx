@@ -31,13 +31,13 @@ export default function Pagination({
       } else if (currentPage >= totalPages - 3) {
         pages.push(1);
         pages.push('...');
-        for (let i = totalPages - 4; i <= totalPages; i++) {
+        for (let i = Math.max(1, totalPages - 4); i <= totalPages; i++) {
           pages.push(i);
         }
       } else {
         pages.push(1);
         pages.push('...');
-        for (let i = currentPage - 1; i <= currentPage + 1; i++) {
+        for (let i = Math.max(1, currentPage - 1); i <= Math.min(totalPages, currentPage + 1); i++) {
           pages.push(i);
         }
         pages.push('...');

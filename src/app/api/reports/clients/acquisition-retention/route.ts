@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
           c.id,
           COUNT(q.id) as booking_count
         FROM clients c
-        LEFT JOIN quotes q ON c.email = q.customer_email AND q.status = 'accepted'
+        LEFT JOIN quotes q ON c.email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci AND q.status = 'accepted'
         WHERE c.organization_id = ?
         GROUP BY c.id
         HAVING booking_count > 0
@@ -58,7 +58,7 @@ export async function GET(request: NextRequest) {
           c.id,
           DATEDIFF(CURDATE(), MAX(q.start_date)) as days_since_last_booking
         FROM clients c
-        JOIN quotes q ON c.email = q.customer_email AND q.status = 'accepted'
+        JOIN quotes q ON c.email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci AND q.status = 'accepted'
         WHERE c.organization_id = ?
         GROUP BY c.id
       ) as customer_activity
@@ -77,7 +77,7 @@ export async function GET(request: NextRequest) {
         COUNT(DISTINCT q.customer_email) as retained_customers,
         SUM(q.total_price) as cohort_revenue
       FROM clients c
-      LEFT JOIN quotes q ON c.email = q.customer_email
+      LEFT JOIN quotes q ON c.email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
         AND q.status = 'accepted'
         AND q.start_date BETWEEN ? AND ?
       WHERE c.organization_id = ?

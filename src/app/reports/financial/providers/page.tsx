@@ -122,25 +122,6 @@ export default function ProviderPaymentPage() {
       </div>
     );
   }
-  
-    return (
-      <div className="p-8">
-        <Link href="/reports" className="text-primary-600 hover:text-primary-700 text-sm mb-2 inline-block">
-          Back to Reports
-        </Link>
-        <div className="mt-8 bg-red-50 border border-red-200 rounded-lg p-6">
-          <h3 className="text-red-800 font-semibold mb-2">Error Loading Report</h3>
-          <p className="text-red-600">{error}</p>
-          <button
-            onClick={fetchData}
-            className="mt-4 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700"
-          >
-            Try Again
-          </button>
-        </div>
-      </div>
-    );
-  }
 
   if (!data) {
     return (
@@ -173,7 +154,7 @@ export default function ProviderPaymentPage() {
     );
   }
 
-  const maxPaid = Math.max(...data.providers.map(p => p.totalPaid.amount_minor));
+  const maxPaid = Math.max(...data.providers.map(p => p.totalPaid.amount_minor), 1);
 
   return (
     <div className="p-8">

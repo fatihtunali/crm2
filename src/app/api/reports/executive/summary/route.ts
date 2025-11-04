@@ -84,7 +84,7 @@ export async function GET(request: NextRequest) {
     const [agentsResult] = await query(`
       SELECT COUNT(DISTINCT c.tour_operator_id) as active_agents
       FROM quotes q
-      JOIN clients c ON q.customer_email = c.email
+      JOIN clients c ON q.customer_email COLLATE utf8mb4_unicode_ci = c.email COLLATE utf8mb4_unicode_ci
       WHERE q.organization_id = ?
       AND q.status = 'accepted'
       AND q.start_date BETWEEN ? AND ?
@@ -130,7 +130,7 @@ export async function GET(request: NextRequest) {
         SUM(q.total_price) as revenue,
         COUNT(q.id) as bookings
       FROM clients c
-      JOIN quotes q ON q.customer_email = c.email
+      JOIN quotes q ON q.customer_email COLLATE utf8mb4_unicode_ci = c.email COLLATE utf8mb4_unicode_ci
       WHERE c.organization_id = ?
       AND q.status = 'accepted'
       AND q.start_date BETWEEN ? AND ?
@@ -189,7 +189,7 @@ export async function GET(request: NextRequest) {
     const [responseTimeResult] = await query(`
       SELECT AVG(TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at)) as avg_response_hours
       FROM customer_itineraries ci
-      JOIN quotes q ON ci.customer_email = q.customer_email
+      JOIN quotes q ON ci.customer_email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
       WHERE q.organization_id = ?
       AND q.created_at BETWEEN ? AND ?
     `, [parseInt(tenantId), startDate, endDate]) as any[];

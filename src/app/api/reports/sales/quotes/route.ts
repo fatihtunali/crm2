@@ -7,7 +7,7 @@ import { createMoney } from '@/lib/money';
 export async function GET(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }

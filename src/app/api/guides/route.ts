@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { parsePaginationParams, buildPagedResponse } from '@/lib/pagination';
-import { createdResponse, errorResponse, badRequestProblem, internalServerErrorProblem } from '@/lib/response';
+import { createdResponse, errorResponse, badRequestProblem, internalServerErrorProblem, successResponse } from '@/lib/response';
 import { requireTenant } from '@/middleware/tenancy';
 import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
 import { handleError } from '@/middleware/errorHandler';
@@ -49,7 +49,7 @@ interface Guide {
 export async function GET(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }
@@ -210,7 +210,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }
@@ -280,6 +280,74 @@ export async function POST(request: NextRequest) {
     }
 
     return response;
+  } catch (error) {
+    return handleError(error, request.url);
+  }
+}
+
+// PUT - Update guide
+export async function PUT(request: NextRequest) {
+  try {
+    // Require tenant
+    const tenantResult = await requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { tenantId } = tenantResult;
+
+    const body = await request.json();
+    const { id } = body;
+
+    if (!id) {
+      return errorResponse(
+        badRequestProblem('Guide ID is required', request.url)
+      );
+    }
+
+    // Verify the guide exists and belongs to this tenant
+    const [existingGuide] = await query(
+      'SELECT id FROM guides WHERE id = ? AND organization_id = ?',
+      [id, parseInt(tenantId)]
+    ) as any[];
+
+    if (!existingGuide) {
+      return errorResponse({
+        type: 'https://httpstatuses.com/404',
+        title: 'Not Found',
+        status: 404,
+        detail: `Guide with ID ${id} not found or does not belong to your organization`,
+        instance: request.url,
+      });
+    }
+
+    // Update the guide
+    await query(
+      `UPDATE guides SET
+        provider_id = ?,
+        city = ?,
+        language = ?,
+        description = ?,
+        status = ?,
+        updated_at = NOW()
+      WHERE id = ? AND organization_id = ?`,
+      [
+        body.provider_id,
+        body.city,
+        body.language,
+        body.description,
+        body.status,
+        id,
+        parseInt(tenantId)
+      ]
+    );
+
+    // Fetch and return the updated guide
+    const [updatedGuide] = await query(
+      'SELECT * FROM guides WHERE id = ?',
+      [id]
+    ) as Guide[];
+
+    return successResponse(updatedGuide);
   } catch (error) {
     return handleError(error, request.url);
   }

@@ -33,7 +33,7 @@ interface SupplierSearchResult {
 export async function GET(request: Request) {
   try {
     // Validate tenant
-    const tenantCheck = requireTenant(request as any);
+    const tenantCheck = await requireTenant(request as any);
     if ('error' in tenantCheck) {
       return errorResponse(tenantCheck.error);
     }

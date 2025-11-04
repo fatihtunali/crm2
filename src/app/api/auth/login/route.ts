@@ -1,11 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import bcrypt from 'bcryptjs';
-import { SignJWT } from 'jose';
-
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || 'your-secret-key-change-this-in-production'
-);
+import { createToken } from '@/lib/jwt';
 
 interface User {
   id: number;
@@ -62,16 +58,12 @@ export async function POST(request: NextRequest) {
     );
 
     // Create JWT token
-    const token = await new SignJWT({
+    const token = await createToken({
       userId: user.id,
       email: user.email,
       organizationId: user.organization_id,
       role: user.role,
-    })
-      .setProtectedHeader({ alg: 'HS256' })
-      .setIssuedAt()
-      .setExpirationTime('7d')
-      .sign(JWT_SECRET);
+    });
 
     // Create response
     const response = NextResponse.json({

@@ -4,7 +4,7 @@
  * @module lib/booking-lifecycle
  */
 
-import { query } from '@/lib/db';
+import { query, transaction } from '@/lib/db';
 import { getLatestExchangeRate } from '@/lib/exchange';
 import type { Booking } from '@/types/api';
 
@@ -97,37 +97,41 @@ export async function createBookingFromQuotation(
       throw new Error('Failed to generate unique booking number after multiple attempts');
     }
 
-    // Insert booking record
-    const insertResult = await query(
-      `INSERT INTO bookings (
-        quotation_id,
-        booking_number,
-        locked_exchange_rate,
-        currency,
-        status
-      ) VALUES (?, ?, ?, ?, 'confirmed')`,
-      [quotationId, bookingNumber!, lockedRate, fromCurrency]
-    );
+    // Create booking and update quotation in a single transaction
+    // This ensures data consistency - if any operation fails, all changes are rolled back
+    const booking = await transaction(async (conn) => {
+      // Insert booking record
+      const [insertResult] = await conn.query(
+        `INSERT INTO bookings (
+          quotation_id,
+          booking_number,
+          locked_exchange_rate,
+          currency,
+          status
+        ) VALUES (?, ?, ?, ?, 'confirmed')`,
+        [quotationId, bookingNumber!, lockedRate, fromCurrency]
+      );
 
-    const insertId = (insertResult as any).insertId;
+      const insertId = (insertResult as any).insertId;
 
-    // Update quotation status to 'accepted'
-    await query(
-      'UPDATE quotes SET status = ? WHERE id = ?',
-      ['accepted', quotationId]
-    );
+      // Update quotation status to 'accepted'
+      await conn.query(
+        'UPDATE quotes SET status = ? WHERE id = ?',
+        ['accepted', quotationId]
+      );
 
-    // Fetch the created booking
-    const createdBookings = await query<Booking>(
-      'SELECT * FROM bookings WHERE id = ?',
-      [insertId]
-    );
+      // Fetch the created booking within the transaction
+      const [createdBookings] = await conn.query<any[]>(
+        'SELECT * FROM bookings WHERE id = ?',
+        [insertId]
+      );
 
-    if (createdBookings.length === 0) {
-      throw new Error('Failed to retrieve created booking');
-    }
+      if (createdBookings.length === 0) {
+        throw new Error('Failed to retrieve created booking');
+      }
 
-    const booking = createdBookings[0];
+      return createdBookings[0] as Booking;
+    });
 
     // TODO: Generate draft receivable and payable invoices
     // This will be implemented when invoice functionality is available

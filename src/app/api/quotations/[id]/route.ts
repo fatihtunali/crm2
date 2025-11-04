@@ -45,19 +45,58 @@ export async function GET(
       return errorResponse(notFoundProblem('Quote not found', `/api/quotations/${id}`));
     }
 
-    // Get days
-    const days = await query(
-      'SELECT * FROM quote_days WHERE quote_id = ? ORDER BY day_number',
+    // Get days and expenses in a single query with JOIN (optimized - no N+1)
+    const daysWithExpenses = await query(
+      `SELECT
+        d.id as day_id,
+        d.quote_id,
+        d.day_number,
+        d.date as day_date,
+        d.created_at as day_created_at,
+        e.id as expense_id,
+        e.expense_type,
+        e.description,
+        e.quantity,
+        e.unit_price,
+        e.total_price,
+        e.notes
+      FROM quote_days d
+      LEFT JOIN quote_expenses e ON d.id = e.quote_day_id
+      WHERE d.quote_id = ?
+      ORDER BY d.day_number, e.id`,
       [id]
     ) as any[];
 
-    // Get expenses for each day
-    for (const day of days) {
-      day.expenses = await query(
-        'SELECT * FROM quote_expenses WHERE quote_day_id = ? ORDER BY id',
-        [day.id]
-      );
+    // Group expenses by day
+    const daysMap = new Map();
+    for (const row of daysWithExpenses) {
+      if (!daysMap.has(row.day_id)) {
+        daysMap.set(row.day_id, {
+          id: row.day_id,
+          quote_id: row.quote_id,
+          day_number: row.day_number,
+          date: row.day_date,
+          created_at: row.day_created_at,
+          expenses: []
+        });
+      }
+
+      // Add expense if it exists (LEFT JOIN may have null expenses)
+      if (row.expense_id) {
+        daysMap.get(row.day_id).expenses.push({
+          id: row.expense_id,
+          expense_type: row.expense_type,
+          description: row.description,
+          quantity: row.quantity,
+          unit_price: row.unit_price,
+          total_price: row.total_price,
+          notes: row.notes
+        });
+      }
     }
+
+    // Convert map to array
+    const days = Array.from(daysMap.values());
 
     // Convert total_price to Money type if it exists
     const responseQuote = {

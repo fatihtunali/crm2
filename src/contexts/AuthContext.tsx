@@ -72,7 +72,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     router.push('/login');
   }
 
-  const organizationId = user?.organizationId?.toString() || '5';
+  // Organization ID from authenticated user - no fallback for security
+  // If user is not authenticated or has no org, this will be empty string
+  const organizationId = user?.organizationId?.toString() || '';
 
   return (
     <AuthContext.Provider value={{ user, loading, login, logout, organizationId }}>

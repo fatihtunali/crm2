@@ -3,9 +3,23 @@ import { query } from '@/lib/db';
 import { parsePaginationParams, parseSortParams, buildPagedResponse } from '@/lib/pagination';
 import { buildWhereClause, buildSearchClause, combineWhereAndSearch } from '@/lib/query-builder';
 import { successResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
+import { requireAuth } from '@/lib/jwt';
 
 export async function GET(request: NextRequest) {
   try {
+    // Require authentication and super_admin role
+    const user = await requireAuth(request);
+
+    if (user.role !== 'super_admin') {
+      return errorResponse({
+        type: 'https://api.crm2.com/problems/forbidden',
+        title: 'Forbidden',
+        status: 403,
+        detail: 'Only super administrators can manage organizations',
+        instance: request.url,
+      });
+    }
+
     const { searchParams } = new URL(request.url);
 
     // Parse pagination parameters
@@ -103,6 +117,19 @@ export async function GET(request: NextRequest) {
 
 export async function POST(request: NextRequest) {
   try {
+    // Require authentication and super_admin role
+    const user = await requireAuth(request);
+
+    if (user.role !== 'super_admin') {
+      return errorResponse({
+        type: 'https://api.crm2.com/problems/forbidden',
+        title: 'Forbidden',
+        status: 403,
+        detail: 'Only super administrators can create organizations',
+        instance: request.url,
+      });
+    }
+
     // Check for idempotency key
     const idempotencyKey = request.headers.get('Idempotency-Key');
     if (idempotencyKey) {
@@ -162,6 +189,88 @@ export async function POST(request: NextRequest) {
     console.error('Database error:', error);
     return errorResponse(
       internalServerErrorProblem('Failed to create agent', '/api/agents')
+    );
+  }
+}
+
+// PUT - Update agent (organization)
+export async function PUT(request: NextRequest) {
+  try {
+    // Require authentication and super_admin role
+    const user = await requireAuth(request);
+
+    if (user.role !== 'super_admin') {
+      return errorResponse({
+        type: 'https://api.crm2.com/problems/forbidden',
+        title: 'Forbidden',
+        status: 403,
+        detail: 'Only super administrators can update organizations',
+        instance: request.url,
+      });
+    }
+
+    const body = await request.json();
+    const { id } = body;
+
+    if (!id) {
+      return errorResponse({
+        type: 'https://httpstatuses.com/400',
+        title: 'Bad Request',
+        status: 400,
+        detail: 'Agent ID is required',
+        instance: request.url,
+      });
+    }
+
+    // Verify the agent exists
+    const [existingAgent] = await query(
+      'SELECT id FROM organizations WHERE id = ?',
+      [id]
+    ) as any[];
+
+    if (!existingAgent) {
+      return errorResponse({
+        type: 'https://httpstatuses.com/404',
+        title: 'Not Found',
+        status: 404,
+        detail: `Agent with ID ${id} not found`,
+        instance: request.url,
+      });
+    }
+
+    // Update the agent
+    await query(
+      `UPDATE organizations SET
+        name = ?,
+        email = ?,
+        phone = ?,
+        country = ?,
+        website = ?,
+        status = ?,
+        updated_at = NOW()
+      WHERE id = ?`,
+      [
+        body.name,
+        body.email,
+        body.phone,
+        body.country,
+        body.website,
+        body.status,
+        id
+      ]
+    );
+
+    // Fetch and return the updated agent
+    const [updatedAgent] = await query(
+      'SELECT * FROM organizations WHERE id = ?',
+      [id]
+    ) as any[];
+
+    return successResponse(updatedAgent);
+  } catch (error) {
+    console.error('Database error:', error);
+    return errorResponse(
+      internalServerErrorProblem('Failed to update agent', '/api/agents')
     );
   }
 }

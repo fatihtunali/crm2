@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { query, transaction } from '@/lib/db';
 
 // GET - Fetch all days for a quote
 export async function GET(
@@ -44,11 +44,19 @@ export async function POST(
 }
 
 // DELETE - Delete a day and its expenses
+// Uses transaction to ensure both expenses and day are deleted atomically
 export async function DELETE(request: Request) {
   try {
     const { dayId } = await request.json();
 
-    await query('DELETE FROM quote_days WHERE id = ?', [dayId]);
+    // Delete day and expenses in a transaction
+    await transaction(async (conn) => {
+      // First delete all expenses associated with this day
+      await conn.query('DELETE FROM quote_expenses WHERE quote_day_id = ?', [dayId]);
+
+      // Then delete the day itself
+      await conn.query('DELETE FROM quote_days WHERE id = ?', [dayId]);
+    });
 
     return NextResponse.json({ success: true });
   } catch (error) {

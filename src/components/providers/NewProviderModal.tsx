@@ -11,7 +11,7 @@ export default function NewProviderModal({ isOpen, onClose, onSuccess }: NewProv
   const { organizationId } = useAuth();
   const [formData, setFormData] = useState({
     provider_name: '',
-    provider_type: 'hotel',
+    provider_type: 'tour_operator',
     city: '',
     address: '',
     contact_email: '',
@@ -45,7 +45,7 @@ export default function NewProviderModal({ isOpen, onClose, onSuccess }: NewProv
         return;
       }
 
-      const res = await fetch('/api/providers', {
+      const res = await fetch('/api/providers?include_all=true', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -69,7 +69,7 @@ export default function NewProviderModal({ isOpen, onClose, onSuccess }: NewProv
 
       setFormData({
         provider_name: '',
-        provider_type: 'hotel',
+        provider_type: 'tour_operator',
         city: '',
         address: '',
         contact_email: '',

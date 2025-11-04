@@ -23,6 +23,12 @@ interface Provider {
   status: string;
   created_at: string;
   updated_at: string;
+  daily_tours_count?: number;
+  transfers_count?: number;
+  vehicles_count?: number;
+  restaurants_count?: number;
+  entrance_fees_count?: number;
+  extra_expenses_count?: number;
 }
 
 export default function SuppliersPage() {
@@ -75,7 +81,11 @@ export default function SuppliersPage() {
         }
       });
       const data = await res.json();
-      setAllProviders(Array.isArray(data.data) ? data.data : []);
+      // Filter out hotel and guide providers (they're managed separately)
+      const filteredProviders = Array.isArray(data.data)
+        ? data.data.filter((p: Provider) => p.provider_type !== 'hotel' && p.provider_type !== 'guide')
+        : [];
+      setAllProviders(filteredProviders);
     } catch (error) {
       console.error('Failed to fetch all providers:', error);
       setAllProviders([]);
@@ -193,14 +203,14 @@ export default function SuppliersPage() {
       {/* Header */}
       <div className="mb-8 flex items-center justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Suppliers</h1>
-          <p className="text-gray-500 mt-1">Manage service providers and suppliers</p>
+          <h1 className="text-3xl font-bold text-gray-900">Service Providers</h1>
+          <p className="text-gray-500 mt-1">Manage tour, transfer, vehicle, and other service providers (Hotels & Guides are managed separately)</p>
         </div>
         <button
           onClick={handleNewProvider}
           className="bg-primary-600 text-white px-6 py-3 rounded-lg hover:bg-primary-700 transition-colors font-medium shadow-sm"
         >
-          + New Supplier
+          + New Provider
         </button>
       </div>
 
@@ -222,7 +232,7 @@ export default function SuppliersPage() {
       {/* Results Summary */}
       <div className="mb-4 flex items-center justify-between">
         <p className="text-sm text-gray-600">
-          Showing <span className="font-semibold">{providers.length}</span> of <span className="font-semibold">{totalItems}</span> suppliers
+          Showing <span className="font-semibold">{providers.length}</span> of <span className="font-semibold">{totalItems}</span> providers
         </p>
       </div>
 

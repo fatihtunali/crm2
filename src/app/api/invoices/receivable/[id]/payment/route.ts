@@ -19,7 +19,7 @@ export async function POST(
   const { id } = await params;
   try {
     // Require tenant
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }

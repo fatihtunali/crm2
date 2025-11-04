@@ -1,68 +1,99 @@
 /**
  * Tenancy Middleware
- * Handles multi-tenant request validation and tenant ID extraction
+ * Handles multi-tenant request validation and tenant ID extraction from JWT
+ *
+ * SECURITY: Tenant ID is extracted from the authenticated user's JWT token,
+ * not from request headers. This prevents users from accessing other
+ * organizations' data by manipulating headers.
  */
 
 import { NextRequest } from 'next/server';
 import type { Problem } from '@/types/api';
+import { getAuthUser, type JWTPayload } from '@/lib/jwt';
 
-/**
- * Extract tenant ID from request headers
- * @param request - The incoming Next.js request
- * @returns The tenant ID if valid, null otherwise
- */
-export function extractTenantId(request: NextRequest): string | null {
-  const tenantId = request.headers.get('X-Tenant-Id');
-
-  if (!tenantId) {
-    return null;
-  }
-
-  // Validate tenant ID format (should be a positive integer)
-  const tenantIdNum = parseInt(tenantId, 10);
-  if (isNaN(tenantIdNum) || tenantIdNum <= 0) {
-    return null;
-  }
-
-  return tenantId;
+export interface TenantContext {
+  tenantId: string;
+  user: JWTPayload;
 }
 
 /**
- * Enforce tenant requirement for the request
- * Returns either the validated tenant ID or an RFC 7807 Problem error
+ * Require authentication and extract tenant ID from JWT token
+ * This is the secure way to handle multi-tenancy - the organization ID
+ * comes from the authenticated user's token, not from request headers.
+ *
  * @param request - The incoming Next.js request
- * @returns Object containing either tenantId or error Problem
+ * @returns Object containing either tenant context or error Problem
  */
-export function requireTenant(
+export async function requireTenant(
   request: NextRequest
-): { tenantId: string } | { error: Problem } {
-  const tenantId = extractTenantId(request);
+): Promise<{ tenantId: string; user: JWTPayload } | { error: Problem }> {
+  try {
+    // First, verify the user is authenticated
+    const user = await getAuthUser(request);
 
-  if (!tenantId) {
-    const headerValue = request.headers.get('X-Tenant-Id');
-
-    if (!headerValue) {
+    if (!user) {
       return {
         error: {
-          type: 'https://api.crm2.com/problems/missing-tenant',
-          title: 'Missing Tenant ID',
-          status: 400,
-          detail: 'The X-Tenant-Id header is required for this request',
+          type: 'https://api.crm2.com/problems/unauthorized',
+          title: 'Authentication Required',
+          status: 401,
+          detail: 'You must be authenticated to access this resource',
           instance: request.url,
         },
       };
     }
 
+    // Extract tenant ID from the authenticated user's JWT
+    // This ensures users can only access their own organization's data
+    const tenantId = user.organizationId.toString();
+
+    if (!tenantId || tenantId === '0') {
+      return {
+        error: {
+          type: 'https://api.crm2.com/problems/invalid-user',
+          title: 'Invalid User Configuration',
+          status: 403,
+          detail: 'Your user account is not associated with an organization',
+          instance: request.url,
+        },
+      };
+    }
+
+    return { tenantId, user };
+  } catch (error) {
     return {
       error: {
-        type: 'https://api.crm2.com/problems/invalid-tenant',
-        title: 'Invalid Tenant ID',
-        status: 400,
-        detail: `The X-Tenant-Id header value '${headerValue}' is not a valid tenant identifier. Expected a positive integer.`,
+        type: 'https://api.crm2.com/problems/authentication-error',
+        title: 'Authentication Error',
+        status: 401,
+        detail: 'Failed to authenticate request',
         instance: request.url,
       },
     };
   }
+}
 
-  return { tenantId };
+/**
+ * Optional tenant extraction - returns null if not authenticated
+ * Use this for endpoints that may have different behavior based on authentication
+ * @param request - The incoming Next.js request
+ * @returns Tenant context or null if not authenticated
+ */
+export async function optionalTenant(
+  request: NextRequest
+): Promise<TenantContext | null> {
+  try {
+    const user = await getAuthUser(request);
+
+    if (!user || !user.organizationId) {
+      return null;
+    }
+
+    return {
+      tenantId: user.organizationId.toString(),
+      user,
+    };
+  } catch {
+    return null;
+  }
 }

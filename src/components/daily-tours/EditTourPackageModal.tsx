@@ -95,7 +95,7 @@ export default function EditTourPackageModal({ isOpen, onClose, onSuccess, tourP
 
   async function fetchProviders() {
     try {
-      const res = await fetch('/api/providers', {
+      const res = await fetch('/api/providers?include_all=true', {
         headers: {
           'X-Tenant-Id': organizationId
         }

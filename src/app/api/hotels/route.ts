@@ -8,7 +8,7 @@ import { requireTenant } from '@/middleware/tenancy';
 export async function GET(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }
@@ -19,9 +19,22 @@ export async function GET(request: NextRequest) {
     // Parse pagination parameters
     const { page, pageSize, offset } = parsePaginationParams(searchParams);
 
-    // Parse sort parameters (default: -created_at)
+    // Define allowed columns for ORDER BY (whitelist for security)
+    const allowedOrderColumns = [
+      'id',
+      'hotel_name',
+      'city',
+      'region',
+      'star_rating',
+      'hotel_category',
+      'created_at',
+      'updated_at',
+      'status'
+    ];
+
+    // Parse sort parameters with whitelist validation (default: -created_at)
     const sortParam = searchParams.get('sort') || '-created_at';
-    const orderBy = parseSortParams(sortParam);
+    const orderBy = parseSortParams(sortParam, allowedOrderColumns);
 
     // Build WHERE conditions manually with table qualifiers
     const whereConditions: string[] = [];
@@ -142,7 +155,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }
@@ -228,6 +241,121 @@ export async function POST(request: NextRequest) {
     console.error('Database error:', error);
     return errorResponse(
       internalServerErrorProblem('Failed to create hotel', '/api/hotels')
+    );
+  }
+}
+
+// PUT - Update hotel
+export async function PUT(request: NextRequest) {
+  try {
+    // Require tenant
+    const tenantResult = await requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { tenantId } = tenantResult;
+
+    const body = await request.json();
+    const { id } = body;
+
+    if (!id) {
+      return errorResponse({
+        type: 'https://httpstatuses.com/400',
+        title: 'Bad Request',
+        status: 400,
+        detail: 'Hotel ID is required',
+        instance: request.url,
+      });
+    }
+
+    // Verify the hotel exists and belongs to this tenant
+    const [existingHotel] = await query(
+      'SELECT id FROM hotels WHERE id = ? AND organization_id = ?',
+      [id, parseInt(tenantId)]
+    ) as any[];
+
+    if (!existingHotel) {
+      return errorResponse({
+        type: 'https://httpstatuses.com/404',
+        title: 'Not Found',
+        status: 404,
+        detail: `Hotel with ID ${id} not found or does not belong to your organization`,
+        instance: request.url,
+      });
+    }
+
+    // Update the hotel
+    await query(
+      `UPDATE hotels SET
+        google_place_id = ?,
+        hotel_name = ?,
+        city = ?,
+        star_rating = ?,
+        hotel_category = ?,
+        room_count = ?,
+        is_boutique = ?,
+        address = ?,
+        latitude = ?,
+        longitude = ?,
+        google_maps_url = ?,
+        contact_phone = ?,
+        contact_email = ?,
+        notes = ?,
+        photo_url_1 = ?,
+        photo_url_2 = ?,
+        photo_url_3 = ?,
+        rating = ?,
+        user_ratings_total = ?,
+        website = ?,
+        editorial_summary = ?,
+        place_types = ?,
+        price_level = ?,
+        business_status = ?,
+        status = ?,
+        updated_at = NOW()
+      WHERE id = ? AND organization_id = ?`,
+      [
+        body.google_place_id,
+        body.hotel_name,
+        body.city,
+        body.star_rating,
+        body.hotel_category,
+        body.room_count,
+        body.is_boutique,
+        body.address,
+        body.latitude,
+        body.longitude,
+        body.google_maps_url,
+        body.contact_phone,
+        body.contact_email,
+        body.notes,
+        body.photo_url_1,
+        body.photo_url_2,
+        body.photo_url_3,
+        body.rating,
+        body.user_ratings_total,
+        body.website,
+        body.editorial_summary,
+        body.place_types,
+        body.price_level,
+        body.business_status,
+        body.status,
+        id,
+        parseInt(tenantId)
+      ]
+    );
+
+    // Fetch and return the updated hotel
+    const [updatedHotel] = await query(
+      'SELECT * FROM hotels WHERE id = ?',
+      [id]
+    ) as any[];
+
+    return successResponse(updatedHotel);
+  } catch (error) {
+    console.error('Database error:', error);
+    return errorResponse(
+      internalServerErrorProblem('Failed to update hotel', '/api/hotels')
     );
   }
 }

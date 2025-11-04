@@ -43,7 +43,7 @@ interface TransferResponse extends Omit<Transfer, 'price_oneway' | 'price_roundt
 export async function GET(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }
@@ -189,7 +189,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }
@@ -279,5 +279,106 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Database error:', error);
     return errorResponse(internalServerErrorProblem('Failed to create transfer'));
+  }
+}
+
+// PUT - Update existing intercity transfer
+export async function PUT(request: NextRequest) {
+  try {
+    // Require tenant
+    const tenantResult = await requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { tenantId } = tenantResult;
+
+    const body = await request.json();
+    const {
+      id,
+      provider_id,
+      vehicle_id,
+      from_city,
+      to_city,
+      season_name,
+      start_date,
+      end_date,
+      price_oneway,
+      price_roundtrip,
+      estimated_duration_hours,
+      notes,
+      status
+    } = body;
+
+    if (!id) {
+      return errorResponse({
+        type: 'validation_error',
+        title: 'Validation Error',
+        status: 400,
+        detail: 'Transfer ID is required'
+      });
+    }
+
+    // Verify transfer belongs to tenant
+    const existing = await query(
+      'SELECT id FROM intercity_transfers WHERE id = ? AND organization_id = ?',
+      [id, tenantId]
+    );
+
+    if ((existing as any[]).length === 0) {
+      return errorResponse({
+        type: 'not_found',
+        title: 'Not Found',
+        status: 404,
+        detail: 'Transfer not found'
+      });
+    }
+
+    // Update transfer
+    await query(
+      `UPDATE intercity_transfers SET
+        provider_id = ?,
+        vehicle_id = ?,
+        from_city = ?,
+        to_city = ?,
+        season_name = ?,
+        start_date = ?,
+        end_date = ?,
+        price_oneway = ?,
+        price_roundtrip = ?,
+        estimated_duration_hours = ?,
+        notes = ?,
+        status = ?
+      WHERE id = ? AND organization_id = ?`,
+      [
+        provider_id || null,
+        vehicle_id || null,
+        from_city,
+        to_city,
+        season_name || null,
+        start_date,
+        end_date,
+        price_oneway,
+        price_roundtrip,
+        estimated_duration_hours || null,
+        notes || null,
+        status,
+        id,
+        tenantId
+      ]
+    );
+
+    // Fetch updated transfer
+    const [updated] = await query(
+      'SELECT * FROM intercity_transfers WHERE id = ?',
+      [id]
+    ) as any[];
+
+    return NextResponse.json({
+      success: true,
+      data: updated
+    });
+  } catch (error) {
+    console.error('Database error:', error);
+    return errorResponse(internalServerErrorProblem('Failed to update transfer'));
   }
 }

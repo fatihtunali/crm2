@@ -10,7 +10,7 @@ import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempoten
 export async function GET(request: NextRequest) {
   try {
     // Enforce tenant scoping
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }
@@ -25,6 +25,11 @@ export async function GET(request: NextRequest) {
     const filters: Record<string, any> = {
       organization_id: tenantId // Tenant scoping
     };
+
+    // Exclude hotel and guide providers only if include_all is not set
+    // This allows forms to fetch all providers while the list page filters them
+    const includeAll = searchParams.get('include_all') === 'true';
+    const excludeTypes = includeAll ? [] : ['hotel', 'guide'];
 
     // Status filter
     const statusFilter = searchParams.get('status');
@@ -58,28 +63,45 @@ export async function GET(request: NextRequest) {
     // Combine WHERE and search
     const combined = combineWhereAndSearch(whereClause, searchClause);
 
+    // Add exclusion for hotel and guide providers (use inline SQL since buildWhereClause returns inline values)
+    // Only add exclusion if there are types to exclude
+    let finalWhereSQL = combined.whereSQL;
+    if (excludeTypes.length > 0) {
+      const excludeCondition = `provider_type NOT IN ('${excludeTypes.join("', '")}')`;
+      finalWhereSQL = combined.whereSQL
+        ? `(${combined.whereSQL}) AND ${excludeCondition}`
+        : excludeCondition;
+    }
+    const finalParams = combined.params;
+
     // Parse sort parameters (default: provider_name ASC)
     const sortParam = searchParams.get('sort') || 'provider_name';
     const orderBy = parseSortParams(sortParam) || 'provider_name ASC';
 
-    // Build main query
+    // Build main query with service counts
     let sql = `
       SELECT
-        id,
-        organization_id,
-        provider_name,
-        provider_type,
-        city,
-        contact_email,
-        contact_phone,
-        status,
-        created_at,
-        updated_at
-      FROM providers
+        p.id,
+        p.organization_id,
+        p.provider_name,
+        p.provider_type,
+        p.city,
+        p.contact_email,
+        p.contact_phone,
+        p.status,
+        p.created_at,
+        p.updated_at,
+        (SELECT COUNT(*) FROM tours WHERE provider_id = p.id) as daily_tours_count,
+        (SELECT COUNT(*) FROM intercity_transfers WHERE provider_id = p.id) as transfers_count,
+        (SELECT COUNT(*) FROM vehicles WHERE provider_id = p.id) as vehicles_count,
+        (SELECT COUNT(*) FROM meal_pricing WHERE provider_id = p.id) as restaurants_count,
+        (SELECT COUNT(*) FROM entrance_fees WHERE provider_id = p.id) as entrance_fees_count,
+        (SELECT COUNT(*) FROM extra_expenses WHERE provider_id = p.id) as extra_expenses_count
+      FROM providers p
     `;
 
-    if (combined.whereSQL) {
-      sql += ` WHERE ${combined.whereSQL}`;
+    if (finalWhereSQL) {
+      sql += ` WHERE ${finalWhereSQL}`;
     }
 
     sql += ` ORDER BY ${orderBy}`;
@@ -87,14 +109,14 @@ export async function GET(request: NextRequest) {
 
     // Build count query
     let countSql = 'SELECT COUNT(*) as total FROM providers';
-    if (combined.whereSQL) {
-      countSql += ` WHERE ${combined.whereSQL}`;
+    if (finalWhereSQL) {
+      countSql += ` WHERE ${finalWhereSQL}`;
     }
 
     // Execute queries in parallel
     const [rows, countResult] = await Promise.all([
-      query(sql, combined.params),
-      query(countSql, combined.params)
+      query(sql, finalParams),
+      query(countSql, finalParams)
     ]);
 
     const total = (countResult as any)[0].total;
@@ -113,7 +135,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     // Enforce tenant scoping
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }

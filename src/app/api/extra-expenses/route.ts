@@ -190,3 +190,66 @@ export async function POST(request: Request) {
   }
 }
 
+// PUT - Update extra expense
+export async function PUT(request: Request) {
+  try {
+    const body = await request.json();
+    const { id } = body;
+
+    if (!id) {
+      return NextResponse.json(
+        { error: 'Extra expense ID is required' },
+        { status: 400 }
+      );
+    }
+
+    // Verify the expense exists
+    const [existingExpense] = await query(
+      'SELECT id FROM extra_expenses WHERE id = ?',
+      [id]
+    ) as any[];
+
+    if (!existingExpense) {
+      return NextResponse.json(
+        { error: 'Extra expense not found' },
+        { status: 404 }
+      );
+    }
+
+    const unitPriceValue = typeof body.unit_price === 'number' ? body.unit_price : parseFloat(body.unit_price);
+
+    // Update the expense
+    await query(
+      `UPDATE extra_expenses SET
+        provider_id = ?,
+        expense_name = ?,
+        expense_category = ?,
+        city = ?,
+        currency = ?,
+        unit_price = ?,
+        unit_type = ?,
+        description = ?,
+        status = ?,
+        updated_at = NOW()
+      WHERE id = ?`,
+      [
+        body.provider_id,
+        body.expense_name,
+        body.expense_category,
+        body.city,
+        body.currency,
+        unitPriceValue,
+        body.unit_type,
+        body.description,
+        body.status,
+        id
+      ]
+    );
+
+    return NextResponse.json({ id, message: 'Extra expense updated successfully' });
+  } catch (error) {
+    console.error('Database error:', error);
+    return errorResponse(internalServerErrorProblem('Failed to update extra expense'));
+  }
+}
+

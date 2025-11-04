@@ -13,6 +13,12 @@ interface Provider {
   status: string;
   created_at: string;
   updated_at: string;
+  daily_tours_count?: number;
+  transfers_count?: number;
+  vehicles_count?: number;
+  restaurants_count?: number;
+  entrance_fees_count?: number;
+  extra_expenses_count?: number;
 }
 
 interface ProvidersTableProps {
@@ -107,6 +113,7 @@ export default function ProvidersTable({
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Provider ID</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
+              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Services</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">City</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Contact Info</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Status</th>
@@ -143,6 +150,48 @@ export default function ProvidersTable({
                       <span className={`px-2 py-1 text-xs rounded-full font-medium ${getProviderTypeColor(provider.provider_type)}`}>
                         {formatProviderTypeName(provider.provider_type)}
                       </span>
+                    </td>
+                    <td className="px-6 py-4">
+                      <div className="flex flex-wrap gap-1">
+                        {provider.daily_tours_count && provider.daily_tours_count > 0 ? (
+                          <span className="px-2 py-1 text-xs bg-purple-100 text-purple-700 rounded font-medium" title="Daily Tours">
+                            🗺️ {provider.daily_tours_count}
+                          </span>
+                        ) : null}
+                        {provider.transfers_count && provider.transfers_count > 0 ? (
+                          <span className="px-2 py-1 text-xs bg-yellow-100 text-yellow-700 rounded font-medium" title="Transfers">
+                            🚗 {provider.transfers_count}
+                          </span>
+                        ) : null}
+                        {provider.vehicles_count && provider.vehicles_count > 0 ? (
+                          <span className="px-2 py-1 text-xs bg-blue-100 text-blue-700 rounded font-medium" title="Vehicles">
+                            🚙 {provider.vehicles_count}
+                          </span>
+                        ) : null}
+                        {provider.restaurants_count && provider.restaurants_count > 0 ? (
+                          <span className="px-2 py-1 text-xs bg-orange-100 text-orange-700 rounded font-medium" title="Restaurants">
+                            🍽️ {provider.restaurants_count}
+                          </span>
+                        ) : null}
+                        {provider.entrance_fees_count && provider.entrance_fees_count > 0 ? (
+                          <span className="px-2 py-1 text-xs bg-pink-100 text-pink-700 rounded font-medium" title="Entrance Fees">
+                            🎫 {provider.entrance_fees_count}
+                          </span>
+                        ) : null}
+                        {provider.extra_expenses_count && provider.extra_expenses_count > 0 ? (
+                          <span className="px-2 py-1 text-xs bg-green-100 text-green-700 rounded font-medium" title="Extra Expenses">
+                            💵 {provider.extra_expenses_count}
+                          </span>
+                        ) : null}
+                        {!provider.daily_tours_count &&
+                         !provider.transfers_count &&
+                         !provider.vehicles_count &&
+                         !provider.restaurants_count &&
+                         !provider.entrance_fees_count &&
+                         !provider.extra_expenses_count ? (
+                          <span className="text-xs text-gray-400">No services</span>
+                        ) : null}
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm text-gray-900">{provider.city || '-'}</div>
@@ -196,7 +245,7 @@ export default function ProvidersTable({
                   {/* Expandable Details Row */}
                   {isExpanded && hasExpandableContent && (
                     <tr className="bg-gray-50">
-                      <td colSpan={8} className="px-4 py-4">
+                      <td colSpan={9} className="px-4 py-4">
                         <div className="ml-12 mr-4">
                           <div className="grid grid-cols-2 gap-4">
                             {/* Address */}

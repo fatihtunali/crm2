@@ -79,6 +79,7 @@ export function parsePaginationParams(
  * Parses sort parameters and generates a SQL ORDER BY clause
  *
  * @param sortString - Sort string in format "field1,-field2" where - prefix means DESC
+ * @param allowedColumns - Optional whitelist of allowed column names for additional security
  * @returns SQL ORDER BY clause (without the "ORDER BY" keywords)
  *
  * @example
@@ -86,8 +87,11 @@ export function parsePaginationParams(
  * parseSortParams("-created_at,name")
  * // Returns: "created_at DESC, name ASC"
  *
- * parseSortParams("price,-rating")
- * // Returns: "price ASC, rating DESC"
+ * parseSortParams("price,-rating", ['price', 'rating', 'name'])
+ * // Returns: "price ASC, rating DESC" (validated against whitelist)
+ *
+ * parseSortParams("malicious_column", ['price', 'name'])
+ * // Returns: "" (column not in whitelist)
  *
  * parseSortParams(undefined)
  * // Returns: ""
@@ -96,10 +100,11 @@ export function parsePaginationParams(
  * @remarks
  * - Field names are sanitized to prevent SQL injection
  * - Only alphanumeric characters and underscores are allowed
+ * - If allowedColumns is provided, only whitelisted columns are accepted
  * - Invalid field names are filtered out
  * - Returns empty string if no valid sort fields
  */
-export function parseSortParams(sortString?: string | null): string {
+export function parseSortParams(sortString?: string | null, allowedColumns?: string[]): string {
   if (!sortString || sortString.trim() === '') {
     return '';
   }
@@ -119,6 +124,12 @@ export function parseSortParams(sortString?: string | null): string {
     // This prevents SQL injection
     if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(fieldName)) {
       console.warn(`Invalid sort field name: ${fieldName}`);
+      continue;
+    }
+
+    // If whitelist is provided, validate against it
+    if (allowedColumns && !allowedColumns.includes(fieldName)) {
+      console.warn(`Sort field not in whitelist: ${fieldName}. Allowed: ${allowedColumns.join(', ')}`);
       continue;
     }
 

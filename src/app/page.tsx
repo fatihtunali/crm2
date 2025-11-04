@@ -33,7 +33,14 @@ export default function Dashboard() {
         const requestsData = await requestsRes.json();
         const toursData = await toursRes.json();
 
-        setStats(statsData);
+        // Handle both direct response and wrapped response formats
+        const stats = statsData.data || statsData;
+        setStats({
+          activeRequests: stats.activeRequests || 0,
+          thisMonthBookings: stats.thisMonthBookings || 0,
+          revenue: stats.revenue || { amount_minor: 0, currency: 'EUR' },
+          pendingQuotes: stats.pendingQuotes || 0
+        });
         setRecentRequests(requestsData);
         setUpcomingTours(toursData);
       } catch (error) {
@@ -61,7 +68,7 @@ export default function Dashboard() {
     },
     {
       label: 'Total Revenue (EUR)',
-      value: loading ? '...' : `€${(stats.revenue.amount_minor / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+      value: loading ? '...' : `€${((stats.revenue?.amount_minor || 0) / 100).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
       icon: '💰',
       color: 'yellow'
     },

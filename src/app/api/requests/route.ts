@@ -9,7 +9,7 @@ import { createMoney } from '@/lib/money';
 export async function GET(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }
@@ -139,7 +139,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }
@@ -233,6 +233,110 @@ export async function POST(request: NextRequest) {
     console.error('Database error:', error);
     return errorResponse(
       internalServerErrorProblem('Failed to create request', '/api/requests')
+    );
+  }
+}
+
+// PUT - Update request
+export async function PUT(request: NextRequest) {
+  try {
+    // Require tenant
+    const tenantResult = await requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { tenantId } = tenantResult;
+
+    const body = await request.json();
+    const { id } = body;
+
+    if (!id) {
+      return errorResponse({
+        type: 'https://httpstatuses.com/400',
+        title: 'Bad Request',
+        status: 400,
+        detail: 'Request ID is required',
+        instance: request.url,
+      });
+    }
+
+    // Verify the request exists and belongs to this tenant
+    const [existingRequest] = await query(
+      'SELECT id FROM customer_itineraries WHERE id = ? AND organization_id = ?',
+      [id, parseInt(tenantId)]
+    ) as any[];
+
+    if (!existingRequest) {
+      return errorResponse({
+        type: 'https://httpstatuses.com/404',
+        title: 'Not Found',
+        status: 404,
+        detail: `Request with ID ${id} not found or does not belong to your organization`,
+        instance: request.url,
+      });
+    }
+
+    // Calculate price per person
+    const totalPax = body.adults + body.children;
+    const pricePerPerson = totalPax > 0 ? body.total_price / totalPax : 0;
+
+    // Update the request
+    await query(
+      `UPDATE customer_itineraries SET
+        customer_name = ?,
+        customer_email = ?,
+        customer_phone = ?,
+        destination = ?,
+        start_date = ?,
+        end_date = ?,
+        adults = ?,
+        children = ?,
+        hotel_category = ?,
+        tour_type = ?,
+        special_requests = ?,
+        total_price = ?,
+        price_per_person = ?,
+        status = ?,
+        updated_at = NOW()
+      WHERE id = ? AND organization_id = ?`,
+      [
+        body.customer_name,
+        body.customer_email,
+        body.customer_phone,
+        body.destination,
+        body.start_date,
+        body.end_date,
+        body.adults,
+        body.children,
+        body.hotel_category,
+        body.tour_type,
+        body.special_requests,
+        body.total_price,
+        pricePerPerson,
+        body.status,
+        id,
+        parseInt(tenantId)
+      ]
+    );
+
+    // Fetch and return the updated request
+    const [updatedRequest] = await query(
+      'SELECT * FROM customer_itineraries WHERE id = ?',
+      [id]
+    ) as any[];
+
+    // Transform to include Money types
+    const transformedRequest = {
+      ...updatedRequest,
+      total_price: createMoney(parseFloat(updatedRequest.total_price || 0), 'EUR'),
+      price_per_person: createMoney(parseFloat(updatedRequest.price_per_person || 0), 'EUR')
+    };
+
+    return successResponse(transformedRequest);
+  } catch (error) {
+    console.error('Database error:', error);
+    return errorResponse(
+      internalServerErrorProblem('Failed to update request', '/api/requests')
     );
   }
 }

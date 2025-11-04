@@ -16,7 +16,7 @@ interface RouteParams {
 export async function GET(request: NextRequest, context: RouteParams) {
   try {
     // Require tenant
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }
@@ -48,7 +48,7 @@ export async function GET(request: NextRequest, context: RouteParams) {
 export async function PUT(request: NextRequest, context: RouteParams) {
   try {
     // Require tenant
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }
@@ -164,7 +164,7 @@ export async function PUT(request: NextRequest, context: RouteParams) {
 export async function DELETE(request: NextRequest, context: RouteParams) {
   try {
     // Require tenant
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }

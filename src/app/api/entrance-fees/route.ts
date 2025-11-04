@@ -1,14 +1,14 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { parsePaginationParams, parseSortParams, buildPagedResponse } from '@/lib/pagination';
-import { errorResponse, internalServerErrorProblem } from '@/lib/response';
+import { successResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
 import { requireTenant } from '@/middleware/tenancy';
 
 // GET - Fetch all entrance fees with their pricing
 export async function GET(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }
@@ -116,7 +116,7 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }
@@ -187,6 +187,88 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Database error:', error);
     return errorResponse(internalServerErrorProblem('Failed to create entrance fee'));
+  }
+}
+
+// PUT - Update entrance fee
+export async function PUT(request: NextRequest) {
+  try {
+    // Require tenant
+    const tenantResult = await requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { tenantId } = tenantResult;
+
+    const body = await request.json();
+    const { id } = body;
+
+    if (!id) {
+      return NextResponse.json(
+        { error: 'Entrance fee ID is required' },
+        { status: 400 }
+      );
+    }
+
+    // Verify the entrance fee exists and belongs to this tenant
+    const [existingFee] = await query(
+      'SELECT id FROM entrance_fees WHERE id = ? AND organization_id = ?',
+      [id, parseInt(tenantId)]
+    ) as any[];
+
+    if (!existingFee) {
+      return NextResponse.json(
+        { error: 'Entrance fee not found or does not belong to your organization' },
+        { status: 404 }
+      );
+    }
+
+    // Update the entrance fee
+    await query(
+      `UPDATE entrance_fees SET
+        provider_id = ?,
+        site_name = ?,
+        city = ?,
+        description = ?,
+        google_place_id = ?,
+        organization_id = ?,
+        latitude = ?,
+        longitude = ?,
+        google_maps_url = ?,
+        photo_url_1 = ?,
+        photo_url_2 = ?,
+        photo_url_3 = ?,
+        rating = ?,
+        user_ratings_total = ?,
+        website = ?,
+        status = ?
+      WHERE id = ? AND organization_id = ?`,
+      [
+        body.provider_id,
+        body.site_name,
+        body.city,
+        body.description,
+        body.google_place_id,
+        body.organization_id,
+        body.latitude,
+        body.longitude,
+        body.google_maps_url,
+        body.photo_url_1,
+        body.photo_url_2,
+        body.photo_url_3,
+        body.rating,
+        body.user_ratings_total,
+        body.website,
+        body.status,
+        id,
+        parseInt(tenantId)
+      ]
+    );
+
+    return NextResponse.json({ id, message: 'Entrance fee updated successfully' });
+  } catch (error) {
+    console.error('Database error:', error);
+    return errorResponse(internalServerErrorProblem('Failed to update entrance fee'));
   }
 }
 

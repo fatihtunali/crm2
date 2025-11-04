@@ -60,7 +60,7 @@ export default function EditVehicleModal({ isOpen, onClose, onSuccess, vehicle }
 
   async function fetchProviders() {
     try {
-      const res = await fetch('/api/providers?limit=1000', {
+      const res = await fetch('/api/providers?include_all=true&limit=1000', {
         headers: {
           'X-Tenant-Id': organizationId
         }

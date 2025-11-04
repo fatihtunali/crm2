@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
+import { useAuth } from '@/contexts/AuthContext';
 
 const navigation = [
   { name: 'Dashboard', href: '/', icon: '📊' },
@@ -24,6 +25,7 @@ const navigation = [
     href: '/suppliers',
     icon: '🏨',
     subItems: [
+      { name: 'Service Providers', href: '/suppliers', icon: '📋' },
       { name: 'Hotels', href: '/hotels', icon: '🏨' },
       { name: 'Daily Tours', href: '/daily-tours', icon: '🗺️' },
       { name: 'Transfers', href: '/transfers', icon: '🚗' },
@@ -38,10 +40,12 @@ const navigation = [
   { name: 'Finance', href: '/finance', icon: '💰' },
   { name: 'Reports', href: '/reports', icon: '📈' },
   { name: 'API Docs', href: '/api-docs', icon: '📖' },
+  { name: 'Settings', href: '/settings', icon: '⚙️', adminOnly: true },
 ];
 
 export default function Sidebar() {
   const pathname = usePathname();
+  const { user, logout } = useAuth();
   const [expandedItems, setExpandedItems] = useState<string[]>(['Clients', 'Suppliers']);
 
   const toggleExpand = (itemName: string) => {
@@ -62,7 +66,15 @@ export default function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-        {navigation.map((item) => {
+        {navigation
+          .filter(item => {
+            // Filter out admin-only items if user is not an admin
+            if (item.adminOnly) {
+              return user?.role === 'org_admin' || user?.role === 'super_admin';
+            }
+            return true;
+          })
+          .map((item) => {
           const isActive = pathname === item.href;
           const hasSubItems = item.subItems && item.subItems.length > 0;
           const isExpanded = expandedItems.includes(item.name);
@@ -128,17 +140,34 @@ export default function Sidebar() {
         })}
       </nav>
 
-      {/* User Info */}
+      {/* User Info & Logout */}
       <div className="p-4 border-t border-gray-200">
-        <div className="flex items-center gap-3">
-          <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center">
-            <span className="text-primary-600 font-semibold">FT</span>
-          </div>
-          <div>
-            <p className="text-sm font-medium text-gray-900">Fatih</p>
-            <p className="text-xs text-gray-500">Tour Operator</p>
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-primary-100 rounded-full flex items-center justify-center">
+              <span className="text-primary-600 font-semibold text-sm">
+                {user?.email?.substring(0, 2).toUpperCase() || 'FT'}
+              </span>
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-sm font-medium text-gray-900 truncate">
+                {user?.email?.split('@')[0] || 'User'}
+              </p>
+              <p className="text-xs text-gray-500 capitalize">
+                {user?.role?.replace('_', ' ') || 'Operator'}
+              </p>
+            </div>
           </div>
         </div>
+
+        {/* Logout Button */}
+        <button
+          onClick={() => logout()}
+          className="w-full flex items-center justify-center gap-2 px-4 py-2 text-sm font-medium text-red-600 bg-red-50 rounded-lg hover:bg-red-100 transition-colors"
+        >
+          <span>🚪</span>
+          <span>Logout</span>
+        </button>
       </div>
     </div>
   );

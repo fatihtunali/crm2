@@ -5,7 +5,7 @@ import { requireTenant } from '@/middleware/tenancy';
 
 export async function GET(request: NextRequest) {
   try {
-    const tenantResult = requireTenant(request);
+    const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
       return errorResponse(tenantResult.error);
     }

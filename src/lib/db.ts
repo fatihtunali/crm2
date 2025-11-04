@@ -1,33 +1,69 @@
 import mysql from 'mysql2/promise';
 
-// Database connection singleton
-let connection: mysql.Connection | null = null;
+/**
+ * Database Connection Pool
+ * Uses connection pooling for better performance and reliability under load
+ */
 
-export async function getConnection() {
-  if (connection) {
-    return connection;
-  }
-
-  if (!process.env.DATABASE_HOST || !process.env.DATABASE_USER || !process.env.DATABASE_PASSWORD || !process.env.DATABASE_NAME) {
-    throw new Error('Database configuration is missing. Please check your .env file.');
-  }
-
-  connection = await mysql.createConnection({
-    host: process.env.DATABASE_HOST,
-    port: parseInt(process.env.DATABASE_PORT || '3306'),
-    user: process.env.DATABASE_USER,
-    password: process.env.DATABASE_PASSWORD,
-    database: process.env.DATABASE_NAME,
-  });
-
-  return connection;
+// Validate required environment variables
+if (!process.env.DATABASE_HOST || !process.env.DATABASE_USER || !process.env.DATABASE_PASSWORD || !process.env.DATABASE_NAME) {
+  throw new Error('Database configuration is missing. Please check your .env file.');
 }
 
-// Generic query function
+// Create connection pool with appropriate settings
+const pool = mysql.createPool({
+  host: process.env.DATABASE_HOST,
+  port: parseInt(process.env.DATABASE_PORT || '3306'),
+  user: process.env.DATABASE_USER,
+  password: process.env.DATABASE_PASSWORD,
+  database: process.env.DATABASE_NAME,
+  waitForConnections: true,
+  connectionLimit: 10, // Maximum number of connections in pool
+  maxIdle: 10, // Maximum number of idle connections
+  idleTimeout: 60000, // Close idle connections after 60 seconds
+  queueLimit: 0, // Unlimited queue
+  enableKeepAlive: true,
+  keepAliveInitialDelay: 0,
+});
+
+/**
+ * Get a connection from the pool
+ * Use this when you need to execute multiple queries in a transaction
+ */
+export async function getConnection(): Promise<mysql.PoolConnection> {
+  return await pool.getConnection();
+}
+
+/**
+ * Generic query function using connection pool
+ * Automatically gets and releases connections from the pool
+ */
 export async function query<T = any>(sql: string, params?: any[]): Promise<T[]> {
-  const conn = await getConnection();
-  const [rows] = await conn.query(sql, params);
+  const [rows] = await pool.query(sql, params);
   return rows as T[];
+}
+
+/**
+ * Execute a transaction with automatic rollback on error
+ * @param callback - Function that receives a connection and executes queries
+ * @returns Result from the callback
+ */
+export async function transaction<T>(
+  callback: (connection: mysql.PoolConnection) => Promise<T>
+): Promise<T> {
+  const connection = await getConnection();
+
+  try {
+    await connection.beginTransaction();
+    const result = await callback(connection);
+    await connection.commit();
+    return result;
+  } catch (error) {
+    await connection.rollback();
+    throw error;
+  } finally {
+    connection.release();
+  }
 }
 
 // Table-specific helpers

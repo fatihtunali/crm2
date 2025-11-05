@@ -56,7 +56,8 @@ export default function SettingsPage() {
         throw new Error('Failed to fetch users');
       }
       const data = await response.json();
-      setUsers(data);
+      // Handle standardized paginated response (Phase 1)
+      setUsers(Array.isArray(data) ? data : (data.data || []));
       setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load users');

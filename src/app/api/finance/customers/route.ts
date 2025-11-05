@@ -23,7 +23,9 @@ export async function GET(request: NextRequest) {
 
     // Parse sort parameters (default: -outstanding DESC, -total_invoiced DESC)
     const sortParam = searchParams.get('sort') || '-outstanding';
-    const orderBy = parseSortParams(sortParam);
+    // SECURITY: Whitelist allowed columns to prevent SQL injection
+    const ALLOWED_COLUMNS = ['customer_name', 'customer_email', 'invoice_count', 'booking_count', 'total_invoiced', 'total_received', 'outstanding', 'last_payment_date', 'overdue_count', 'partial_count', 'paid_count'];
+    const orderBy = parseSortParams(sortParam, ALLOWED_COLUMNS);
 
     // Build search clause (search in customer_name, customer_email)
     const searchTerm = searchParams.get('search');

@@ -1,15 +1,26 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { requireTenant } from '@/middleware/tenancy';
+import { errorResponse, successResponse, internalServerErrorProblem } from '@/lib/response';
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    // Get tenant ID from header
-    const tenantId = request.headers.get('X-Tenant-Id');
-    if (!tenantId) {
-      return NextResponse.json({
-        success: false,
-        error: 'X-Tenant-Id header is required'
-      }, { status: 400 });
+    // SECURITY: Require authentication and get tenant context
+    const tenantResult = await requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { tenantId, user } = tenantResult;
+
+    // SECURITY: Only super_admin can cleanup tours
+    if (user.role !== 'super_admin') {
+      return errorResponse({
+        type: 'https://api.crm2.com/problems/forbidden',
+        title: 'Forbidden',
+        status: 403,
+        detail: 'Only super_admin can perform cleanup operations',
+        instance: request.url,
+      });
     }
 
     // Count inactive tours first
@@ -21,7 +32,7 @@ export async function POST(request: Request) {
     const inactiveCount = countResult.total;
 
     if (inactiveCount === 0) {
-      return NextResponse.json({
+      return successResponse({
         success: true,
         message: 'No inactive tours found',
         deleted: 0
@@ -34,7 +45,7 @@ export async function POST(request: Request) {
       ['inactive', parseInt(tenantId)]
     );
 
-    return NextResponse.json({
+    return successResponse({
       success: true,
       message: `Successfully deleted ${inactiveCount} inactive tours`,
       deleted: inactiveCount
@@ -42,9 +53,6 @@ export async function POST(request: Request) {
 
   } catch (error: any) {
     console.error('Cleanup error:', error);
-    return NextResponse.json({
-      success: false,
-      error: error.message
-    }, { status: 500 });
+    return errorResponse(internalServerErrorProblem('Failed to cleanup tours'));
   }
 }

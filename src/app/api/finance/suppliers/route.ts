@@ -23,7 +23,9 @@ export async function GET(request: NextRequest) {
 
     // Parse sort parameters (default: -outstanding DESC, -total_invoiced DESC)
     const sortParam = searchParams.get('sort') || '-outstanding';
-    const orderBy = parseSortParams(sortParam);
+    // SECURITY: Whitelist allowed columns to prevent SQL injection
+    const ALLOWED_COLUMNS = ['provider_id', 'provider_name', 'provider_type', 'contact_email', 'contact_phone', 'invoice_count', 'total_invoiced', 'total_paid', 'outstanding', 'last_payment_date', 'overdue_count', 'pending_count', 'paid_count'];
+    const orderBy = parseSortParams(sortParam, ALLOWED_COLUMNS);
 
     // Build filters
     const filters: Record<string, any> = {};

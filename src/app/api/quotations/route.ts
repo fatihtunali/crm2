@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import {
   parsePaginationParams,
@@ -15,10 +15,18 @@ import {
   errorResponse,
   internalServerErrorProblem,
 } from '@/lib/response';
+import { requireTenant } from '@/middleware/tenancy';
 
 // GET - Fetch all quotations with pagination, search, sort, and filters
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
+    // Require authentication and get tenant context
+    const tenantResult = await requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { tenantId } = tenantResult;
+
     const { searchParams } = new URL(request.url);
 
     // Parse pagination params
@@ -26,10 +34,13 @@ export async function GET(request: Request) {
 
     // Parse filters
     const statusFilter = searchParams.get('status');
-    const filters: Record<string, any> = {};
+    const filters: Record<string, any> = {
+      // SECURITY: Always filter by organization to ensure tenant isolation
+      'q.organization_id': parseInt(tenantId)
+    };
 
     if (statusFilter && statusFilter !== 'all') {
-      filters.status = statusFilter;
+      filters['q.status'] = statusFilter;
     }
 
     // Parse search
@@ -37,7 +48,9 @@ export async function GET(request: Request) {
 
     // Parse sort (default to -created_at)
     const sortParam = searchParams.get('sort') || '-created_at';
-    const orderBy = parseSortParams(sortParam) || 'q.created_at DESC';
+    // SECURITY: Whitelist allowed columns to prevent SQL injection
+    const ALLOWED_COLUMNS = ['id', 'quote_number', 'customer_name', 'customer_email', 'destination', 'status', 'start_date', 'end_date', 'total_price', 'created_at', 'updated_at'];
+    const orderBy = parseSortParams(sortParam, ALLOWED_COLUMNS) || 'q.created_at DESC';
 
     // Build WHERE clause for filters
     const whereClause = buildWhereClause(filters);
@@ -92,16 +105,24 @@ export async function GET(request: Request) {
 }
 
 // POST - Create new quotation
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    // Require authentication and get tenant context
+    const tenantResult = await requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { tenantId, user } = tenantResult;
+
     // Check for Idempotency-Key header
     const idempotencyKey = request.headers.get('Idempotency-Key');
 
     // If idempotency key is provided, check if we've already processed this request
+    // SECURITY: Also check organization_id to ensure tenant isolation
     if (idempotencyKey) {
       const existing = await query(
-        'SELECT * FROM quotes WHERE idempotency_key = ?',
-        [idempotencyKey]
+        'SELECT * FROM quotes WHERE idempotency_key = ? AND organization_id = ?',
+        [idempotencyKey, parseInt(tenantId)]
       ) as any[];
 
       if (existing.length > 0) {
@@ -162,8 +183,8 @@ export async function POST(request: Request) {
     ];
 
     const insertValues = [
-      1, // TODO: Get from session
-      1, // TODO: Get from session
+      parseInt(tenantId), // SECURITY: Use authenticated user's organization ID
+      user.userId, // SECURITY: Use authenticated user's ID
       quote_number,
       category || 'B2C',
       customer_name,
@@ -221,8 +242,15 @@ export async function POST(request: Request) {
 }
 
 // PUT - Update quotation
-export async function PUT(request: Request) {
+export async function PUT(request: NextRequest) {
   try {
+    // Require authentication and get tenant context
+    const tenantResult = await requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { tenantId } = tenantResult;
+
     const body = await request.json();
     const {
       id,
@@ -249,6 +277,7 @@ export async function PUT(request: Request) {
       pricing_table
     } = body;
 
+    // SECURITY: Update only if quotation belongs to user's organization
     await query(
       `UPDATE quotes SET
         quote_name = ?, category = ?, customer_name = ?, customer_email = ?,
@@ -256,7 +285,7 @@ export async function PUT(request: Request) {
         tour_type = ?, pax = ?, adults = ?, children = ?, markup = ?, tax = ?,
         transport_pricing_mode = ?, season_name = ?, valid_from = ?, valid_to = ?,
         status = ?, total_price = ?, pricing_table = ?
-      WHERE id = ?`,
+      WHERE id = ? AND organization_id = ?`,
       [
         quote_name,
         category,
@@ -279,30 +308,39 @@ export async function PUT(request: Request) {
         status,
         total_price,
         pricing_table ? JSON.stringify(pricing_table) : null,
-        id
+        id,
+        parseInt(tenantId)
       ]
     );
 
-    return NextResponse.json({ success: true });
+    return successResponse({ success: true });
   } catch (error) {
     console.error('Database error:', error);
-    return NextResponse.json({ error: 'Failed to update quotation' }, { status: 500 });
+    return errorResponse(internalServerErrorProblem('Failed to update quotation'));
   }
 }
 
 // DELETE - Soft delete quotation
-export async function DELETE(request: Request) {
+export async function DELETE(request: NextRequest) {
   try {
+    // Require authentication and get tenant context
+    const tenantResult = await requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { tenantId } = tenantResult;
+
     const { id } = await request.json();
 
+    // SECURITY: Delete only if quotation belongs to user's organization
     await query(
-      'UPDATE quotes SET status = ? WHERE id = ?',
-      ['expired', id]
+      'UPDATE quotes SET status = ? WHERE id = ? AND organization_id = ?',
+      ['expired', id, parseInt(tenantId)]
     );
 
-    return NextResponse.json({ success: true });
+    return successResponse({ success: true });
   } catch (error) {
     console.error('Database error:', error);
-    return NextResponse.json({ error: 'Failed to delete quotation' }, { status: 500 });
+    return errorResponse(internalServerErrorProblem('Failed to delete quotation'));
   }
 }

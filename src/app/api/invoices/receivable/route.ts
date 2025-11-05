@@ -23,7 +23,9 @@ export async function GET(request: NextRequest) {
 
     // Parse sort parameters (default: -invoice_date,-created_at)
     const sortParam = searchParams.get('sort') || '-invoice_date,-created_at';
-    const orderBy = parseSortParams(sortParam);
+    // SECURITY: Whitelist allowed columns to prevent SQL injection
+    const ALLOWED_COLUMNS = ['id', 'invoice_number', 'customer_name', 'invoice_date', 'due_date', 'total_amount', 'paid_amount', 'status', 'created_at', 'updated_at'];
+    const orderBy = parseSortParams(sortParam, ALLOWED_COLUMNS);
 
     // Build filters
     const filters: Record<string, any> = {};

@@ -1,23 +1,75 @@
-import { NextResponse } from 'next/server';
-import { query } from '@/lib/db';
+import { NextRequest, NextResponse } from 'next/server';
+import { query, transaction } from '@/lib/db';
 import { generateItineraryWithAI } from '@/lib/ai';
+import { requireTenant } from '@/middleware/tenancy';
+import { errorResponse, successResponse, internalServerErrorProblem } from '@/lib/response';
+
+// Rate limiting for AI calls (in-memory, will be moved to MySQL later)
+const aiRateLimits = new Map<string, { count: number; resetTime: number }>();
+const AI_RATE_LIMIT = 5; // 5 calls per hour per user
+const AI_RATE_WINDOW = 60 * 60 * 1000; // 1 hour in milliseconds
+
+function checkAIRateLimit(userId: number): { allowed: boolean; resetIn?: number } {
+  const now = Date.now();
+  const key = `ai_${userId}`;
+  const userLimit = aiRateLimits.get(key);
+
+  if (!userLimit || now > userLimit.resetTime) {
+    // Reset or create new limit
+    aiRateLimits.set(key, { count: 1, resetTime: now + AI_RATE_WINDOW });
+    return { allowed: true };
+  }
+
+  if (userLimit.count >= AI_RATE_LIMIT) {
+    const resetIn = Math.ceil((userLimit.resetTime - now) / 1000 / 60); // minutes
+    return { allowed: false, resetIn };
+  }
+
+  userLimit.count++;
+  return { allowed: true };
+}
 
 // POST - Auto-generate itinerary for a quote using Claude AI
 export async function POST(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    // SECURITY: Require authentication
+    const tenantResult = await requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { tenantId, user } = tenantResult;
+
+    // SECURITY: Rate limiting for AI calls (expensive operation)
+    const rateLimitCheck = checkAIRateLimit(user.userId);
+    if (!rateLimitCheck.allowed) {
+      return errorResponse({
+        type: 'https://api.crm2.com/problems/rate-limit',
+        title: 'Rate Limit Exceeded',
+        status: 429,
+        detail: `AI itinerary generation limit exceeded. Try again in ${rateLimitCheck.resetIn} minutes.`,
+        instance: request.url,
+      });
+    }
+
     const { id } = await params;
 
-    // Get quote details
+    // Get quote details - SECURITY: Verify it belongs to user's organization
     const [quote] = await query(
-      'SELECT * FROM quotes WHERE id = ?',
-      [id]
+      'SELECT * FROM quotes WHERE id = ? AND organization_id = ?',
+      [id, parseInt(tenantId)]
     ) as any[];
 
     if (!quote) {
-      return NextResponse.json({ error: 'Quote not found' }, { status: 404 });
+      return errorResponse({
+        type: 'https://api.crm2.com/problems/not-found',
+        title: 'Not Found',
+        status: 404,
+        detail: 'Quote not found or you do not have access',
+        instance: request.url,
+      });
     }
 
     // Parse destination to get cities
@@ -37,28 +89,19 @@ export async function POST(
     // Fetch available transfers for all cities
     const availableTransfers = await fetchAvailableTransfers(cities);
 
-    // Delete existing days and expenses to prevent duplicates
-    const existingDays = await query(
-      'SELECT id FROM quote_days WHERE quote_id = ?',
-      [id]
-    ) as any[];
-
-    for (const day of existingDays) {
-      // Delete associated expenses
-      await query('DELETE FROM quote_expenses WHERE quote_day_id = ?', [day.id]);
-    }
-
-    // Delete all days for this quote
-    await query('DELETE FROM quote_days WHERE quote_id = ?', [id]);
+    // SECURITY: Validate input before passing to AI (prevent prompt injection)
+    const sanitizedDestination = quote.destination?.trim().substring(0, 200) || 'Unknown';
+    const sanitizedTourType = quote.tour_type?.trim().substring(0, 50) || 'Private';
 
     // Generate itinerary using Claude AI
+    console.log('🤖 Generating itinerary with AI...');
     const aiGeneratedDays = await generateItineraryWithAI({
-      destination: quote.destination,
+      destination: sanitizedDestination,
       startDate: quote.start_date,
       endDate: quote.end_date,
       adults: quote.adults || 2,
       children: quote.children || 0,
-      tourType: quote.tour_type || 'Private',
+      tourType: sanitizedTourType,
       availableHotels,
       availableTours,
       availableEntranceFees,
@@ -75,100 +118,122 @@ export async function POST(
       console.log(`  Transfers: ${day.transfers?.length || 0}`);
     });
 
-    // Save the AI-generated itinerary to database
-    const generatedDays = [];
+    // SECURITY: Wrap all database operations in a transaction
+    // This ensures data consistency - if anything fails, all changes are rolled back
+    const generatedDays = await transaction(async (conn) => {
+      // Step 1: Delete existing days and expenses
+      const existingDays = await conn.query(
+        'SELECT id FROM quote_days WHERE quote_id = ?',
+        [id]
+      ) as any;
 
-    for (const aiDay of aiGeneratedDays) {
-      // Create day record with AI-generated content
-      const dayResult = await query(
-        'INSERT INTO quote_days (quote_id, day_number, date, title, narrative, meals) VALUES (?, ?, ?, ?, ?, ?)',
-        [id, aiDay.dayNumber, aiDay.date, aiDay.title, aiDay.narrative, aiDay.meals]
-      );
-      const dayId = (dayResult as any).insertId;
+      for (const day of existingDays[0]) {
+        // Delete associated expenses
+        await conn.query('DELETE FROM quote_expenses WHERE quote_day_id = ?', [day.id]);
+      }
+
+      // Delete all days for this quote
+      await conn.query('DELETE FROM quote_days WHERE quote_id = ?', [id]);
+
+      // Step 2: Save the AI-generated itinerary to database
+      const days = [];
+
+      for (const aiDay of aiGeneratedDays) {
+        // Create day record with AI-generated content
+        const dayResult = await conn.query(
+          'INSERT INTO quote_days (quote_id, day_number, date, title, narrative, meals) VALUES (?, ?, ?, ?, ?, ?)',
+          [id, aiDay.dayNumber, aiDay.date, aiDay.title, aiDay.narrative, aiDay.meals]
+        );
+        const dayId = (dayResult as any)[0].insertId;
 
       const expenses = [];
 
-      // Add hotels
-      for (const hotel of aiDay.hotels || []) {
-        const hotelData = availableHotels.find(h => h.id === hotel.id);
-        if (hotelData) {
-          await createExpense(dayId, {
-            category: 'hotelAccommodation',
-            hotel_category: hotelData.hotel_category,
-            location: aiDay.city,
-            description: hotelData.hotel_name,
-            price: hotelData.price || 100,
-            single_supplement: hotelData.single_supplement || 50,
-            child_0to2: 0,
-            child_3to5: hotelData.child_0to2 || 0,
-            child_6to11: hotelData.child_6to11 || 40
-          });
-          expenses.push('Hotel');
+        // Add hotels
+        for (const hotel of aiDay.hotels || []) {
+          const hotelData = availableHotels.find(h => h.id === hotel.id);
+          if (hotelData) {
+            await createExpense(dayId, {
+              category: 'hotelAccommodation',
+              hotel_category: hotelData.hotel_category,
+              location: aiDay.city,
+              description: hotelData.hotel_name,
+              price: hotelData.price || 100,
+              single_supplement: hotelData.single_supplement || 50,
+              child_0to2: 0,
+              child_3to5: hotelData.child_0to2 || 0,
+              child_6to11: hotelData.child_6to11 || 40
+            }, conn);
+            expenses.push('Hotel');
+          }
         }
+
+        // Add tours
+        for (const tour of aiDay.tours || []) {
+          const tourData = availableTours.find(t => t.id === tour.id);
+          if (tourData) {
+            await createExpense(dayId, {
+              category: 'sicTourCost',
+              location: aiDay.city,
+              description: tourData.tour_name,
+              price: tourData.price || 75,
+              child_0to2: 0,
+              child_3to5: (tourData.price || 75) / 2,
+              child_6to11: (tourData.price || 75) / 2
+            }, conn);
+            expenses.push('Tour');
+          }
+        }
+
+        // Add entrance fees
+        for (const fee of aiDay.entranceFees || []) {
+          const feeData = availableEntranceFees.find(f => f.id === fee.id);
+          if (feeData) {
+            await createExpense(dayId, {
+              category: 'entranceFees',
+              location: aiDay.city,
+              description: feeData.site_name,
+              price: feeData.price || 15,
+              child_0to2: 0,
+              child_3to5: feeData.child_price || 10,
+              child_6to11: feeData.child_price || 10
+            }, conn);
+            expenses.push('Entrance Fee');
+          }
+        }
+
+        // Add transfers
+        for (const transfer of aiDay.transfers || []) {
+          const transferData = availableTransfers.find(t => t.id === transfer.id);
+          if (transferData) {
+            await createExpense(dayId, {
+              category: 'transportation',
+              location: aiDay.city,
+              description: transfer.name || 'Transfer',
+              price: transferData.price_oneway || 50,
+              vehicle_count: 1,
+              price_per_vehicle: transferData.price_oneway || 50
+            }, conn);
+            expenses.push('Transfer');
+          }
+        }
+
+        days.push({
+          day: aiDay.dayNumber,
+          date: aiDay.date,
+          city: aiDay.city,
+          title: aiDay.title,
+          narrative: aiDay.narrative,
+          meals: aiDay.meals,
+          expenses
+        });
       }
 
-      // Add tours
-      for (const tour of aiDay.tours || []) {
-        const tourData = availableTours.find(t => t.id === tour.id);
-        if (tourData) {
-          await createExpense(dayId, {
-            category: 'sicTourCost',
-            location: aiDay.city,
-            description: tourData.tour_name,
-            price: tourData.price || 75,
-            child_0to2: 0,
-            child_3to5: (tourData.price || 75) / 2,
-            child_6to11: (tourData.price || 75) / 2
-          });
-          expenses.push('Tour');
-        }
-      }
+      // Return the days array from the transaction
+      return days;
+    });
 
-      // Add entrance fees
-      for (const fee of aiDay.entranceFees || []) {
-        const feeData = availableEntranceFees.find(f => f.id === fee.id);
-        if (feeData) {
-          await createExpense(dayId, {
-            category: 'entranceFees',
-            location: aiDay.city,
-            description: feeData.site_name,
-            price: feeData.price || 15,
-            child_0to2: 0,
-            child_3to5: feeData.child_price || 10,
-            child_6to11: feeData.child_price || 10
-          });
-          expenses.push('Entrance Fee');
-        }
-      }
-
-      // Add transfers
-      for (const transfer of aiDay.transfers || []) {
-        const transferData = availableTransfers.find(t => t.id === transfer.id);
-        if (transferData) {
-          await createExpense(dayId, {
-            category: 'transportation',
-            location: aiDay.city,
-            description: transfer.name || 'Transfer',
-            price: transferData.price_oneway || 50,
-            vehicle_count: 1,
-            price_per_vehicle: transferData.price_oneway || 50
-          });
-          expenses.push('Transfer');
-        }
-      }
-
-      generatedDays.push({
-        day: aiDay.dayNumber,
-        date: aiDay.date,
-        city: aiDay.city,
-        title: aiDay.title,
-        narrative: aiDay.narrative,
-        meals: aiDay.meals,
-        expenses
-      });
-    }
-
-    return NextResponse.json({
+    // Transaction successful - return success response
+    return successResponse({
       success: true,
       message: 'AI-generated itinerary created successfully',
       days: generatedDays
@@ -176,10 +241,8 @@ export async function POST(
 
   } catch (error) {
     console.error('Error generating itinerary:', error);
-    return NextResponse.json({
-      error: 'Failed to generate itinerary',
-      details: error instanceof Error ? error.message : 'Unknown error'
-    }, { status: 500 });
+    // SECURITY: Don't expose internal error details in production
+    return errorResponse(internalServerErrorProblem('Failed to generate itinerary with AI'));
   }
 }
 
@@ -307,8 +370,9 @@ async function fetchAvailableTransfers(cities: string[]) {
   return transfers;
 }
 
-async function createExpense(dayId: number, expense: any) {
-  await query(
+async function createExpense(dayId: number, expense: any, connection?: any) {
+  const queryFn = connection || query;
+  await queryFn(
     `INSERT INTO quote_expenses (
       quote_day_id, category, hotel_category, location, description,
       price, single_supplement, child_0to2, child_3to5, child_6to11,

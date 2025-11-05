@@ -22,7 +22,9 @@ export async function GET(request: NextRequest) {
 
     // Parse sort parameters (default: -created_at)
     const sortParam = searchParams.get('sort') || '-created_at';
-    const orderBy = parseSortParams(sortParam);
+    // SECURITY: Whitelist allowed columns to prevent SQL injection
+    const ALLOWED_COLUMNS = ['id', 'customer_name', 'customer_email', 'destination', 'start_date', 'end_date', 'status', 'tour_type', 'hotel_category', 'source', 'created_at', 'updated_at'];
+    const orderBy = parseSortParams(sortParam, ALLOWED_COLUMNS);
 
     // Build filters
     const filters: Record<string, any> = {};

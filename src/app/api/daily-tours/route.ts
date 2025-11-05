@@ -25,7 +25,9 @@ export async function GET(request: Request) {
 
     // Sort parameters
     const sortParam = searchParams.get('sort') || '-created_at';
-    const orderByClause = parseSortParams(sortParam) || 't.tour_name ASC';
+    // SECURITY: Whitelist allowed columns to prevent SQL injection
+    const ALLOWED_COLUMNS = ['id', 'tour_name', 'tour_code', 'city', 'duration_days', 'duration_hours', 'tour_type', 'status', 'created_at', 'updated_at'];
+    const orderByClause = parseSortParams(sortParam, ALLOWED_COLUMNS) || 't.tour_name ASC';
 
     // Filter parameters
     const statusFilter = searchParams.get('status');

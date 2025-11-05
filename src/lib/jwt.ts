@@ -1,26 +1,23 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { NextRequest } from 'next/server';
 
-// Validate JWT_SECRET exists and is strong enough
 // Skip validation during build time (when Next.js is collecting page data)
 const isBuildTime = process.env.NEXT_PHASE === 'phase-production-build' ||
                     process.env.NEXT_PHASE === 'phase-development-build';
 
-if (!isBuildTime) {
-  if (!process.env.JWT_SECRET) {
-    throw new Error(
-      'JWT_SECRET environment variable is required. Generate one with: openssl rand -base64 32'
-    );
-  }
+// Load environment config (validates JWT_SECRET)
+// Use build-time placeholder to avoid errors during Next.js build
+let jwtSecretString: string;
 
-  if (process.env.JWT_SECRET.length < 32) {
-    throw new Error(
-      'JWT_SECRET must be at least 32 characters long for security'
-    );
-  }
+if (isBuildTime) {
+  jwtSecretString = 'build-time-placeholder-secret-12345678901234567890';
+} else {
+  // This import will validate all environment variables including JWT_SECRET
+  const { env } = require('./env');
+  jwtSecretString = env.JWT_SECRET;
 }
 
-const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET || 'build-time-placeholder');
+const JWT_SECRET = new TextEncoder().encode(jwtSecretString);
 
 export interface JWTPayload {
   userId: number;

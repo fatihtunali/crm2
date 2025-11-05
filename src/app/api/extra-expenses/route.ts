@@ -14,7 +14,9 @@ export async function GET(request: Request) {
 
     // Parse sort parameters (default: expense_name ASC)
     const sortParam = searchParams.get('sort') || 'expense_name';
-    const orderBy = parseSortParams(sortParam) || 'expense_name ASC';
+    // SECURITY: Whitelist allowed columns to prevent SQL injection
+    const ALLOWED_COLUMNS = ['id', 'expense_name', 'expense_category', 'city', 'unit_price', 'unit_type', 'currency', 'status', 'created_at', 'updated_at'];
+    const orderBy = parseSortParams(sortParam, ALLOWED_COLUMNS) || 'expense_name ASC';
 
     // Build filters
     const filters: Record<string, any> = {};

@@ -20,7 +20,9 @@ export async function GET(request: NextRequest) {
 
     // Parse sort parameters (default: start_date ASC)
     const sortParam = searchParams.get('sort') || 'start_date';
-    const orderBy = parseSortParams(sortParam);
+    // SECURITY: Whitelist allowed columns to prevent SQL injection
+    const ALLOWED_COLUMNS = ['id', 'destination', 'customer_name', 'start_date', 'end_date', 'status', 'adults', 'children'];
+    const orderBy = parseSortParams(sortParam, ALLOWED_COLUMNS);
 
     // Get upcoming itineraries that are confirmed with tenant filtering
     const sql = `

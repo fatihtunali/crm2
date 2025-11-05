@@ -1,22 +1,19 @@
 import mysql from 'mysql2/promise';
+import { env } from './env';
 
 /**
  * Database Connection Pool
  * Uses connection pooling for better performance and reliability under load
  */
 
-// Validate required environment variables
-if (!process.env.DATABASE_HOST || !process.env.DATABASE_USER || !process.env.DATABASE_PASSWORD || !process.env.DATABASE_NAME) {
-  throw new Error('Database configuration is missing. Please check your .env file.');
-}
-
 // Create connection pool with appropriate settings
+// Environment variables are validated in env.ts on app startup
 const pool = mysql.createPool({
-  host: process.env.DATABASE_HOST,
-  port: parseInt(process.env.DATABASE_PORT || '3306'),
-  user: process.env.DATABASE_USER,
-  password: process.env.DATABASE_PASSWORD,
-  database: process.env.DATABASE_NAME,
+  host: env.DATABASE_HOST,
+  port: env.DATABASE_PORT,
+  user: env.DATABASE_USER,
+  password: env.DATABASE_PASSWORD,
+  database: env.DATABASE_NAME,
   waitForConnections: true,
   connectionLimit: 10, // Maximum number of connections in pool
   maxIdle: 10, // Maximum number of idle connections

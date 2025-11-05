@@ -1,8 +1,28 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { requireTenant } from '@/middleware/tenancy';
+import { errorResponse, successResponse, internalServerErrorProblem } from '@/lib/response';
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
+    // SECURITY: Require authentication and get tenant context
+    const tenantResult = await requireTenant(request);
+    if ('error' in tenantResult) {
+      return errorResponse(tenantResult.error);
+    }
+    const { user } = tenantResult;
+
+    // SECURITY: Only super_admin can view database schema
+    if (user.role !== 'super_admin') {
+      return errorResponse({
+        type: 'https://api.crm2.com/problems/forbidden',
+        title: 'Forbidden',
+        status: 403,
+        detail: 'Only super_admin can view database schema',
+        instance: request.url,
+      });
+    }
+
     const { searchParams } = new URL(request.url);
     const table = searchParams.get('table') || 'providers';
 
@@ -15,15 +35,19 @@ export async function GET(request: Request) {
     ];
 
     if (!ALLOWED_TABLES.includes(table)) {
-      return NextResponse.json({
-        error: 'Invalid table name'
-      }, { status: 400 });
+      return errorResponse({
+        type: 'https://api.crm2.com/problems/invalid-parameter',
+        title: 'Invalid Parameter',
+        status: 400,
+        detail: 'Invalid table name',
+        instance: request.url,
+      });
     }
 
     // Get table structure - safe now because table is validated
     const columns = await query(`DESCRIBE ${table}`) as any[];
 
-    return NextResponse.json({
+    return successResponse({
       table,
       columns: columns.map((col: any) => ({
         Field: col.Field,
@@ -37,8 +61,6 @@ export async function GET(request: Request) {
 
   } catch (error: any) {
     console.error('Schema check error:', error);
-    return NextResponse.json({
-      error: error.message
-    }, { status: 500 });
+    return errorResponse(internalServerErrorProblem('Failed to check schema'));
   }
 }

@@ -52,7 +52,9 @@ export async function GET(request: Request) {
 
     // Get sorting
     const sortParam = searchParams.get('sort');
-    const sortClause = parseSortParams(sortParam || 'name');
+    // SECURITY: Whitelist allowed columns to prevent SQL injection
+    const ALLOWED_COLUMNS = ['id', 'name', 'location', 'supplier_type', 'price', 'currency'];
+    const sortClause = parseSortParams(sortParam || 'name', ALLOWED_COLUMNS);
 
     // Validate type filter if provided
     const validTypes: SupplierType[] = [

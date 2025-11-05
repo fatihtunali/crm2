@@ -76,7 +76,9 @@ export async function GET(request: NextRequest) {
 
     // Parse sort parameters (default: provider_name ASC)
     const sortParam = searchParams.get('sort') || 'provider_name';
-    const orderBy = parseSortParams(sortParam) || 'provider_name ASC';
+    // SECURITY: Whitelist allowed columns to prevent SQL injection
+    const ALLOWED_COLUMNS = ['id', 'provider_name', 'provider_type', 'city', 'contact_email', 'contact_phone', 'status', 'created_at', 'updated_at'];
+    const orderBy = parseSortParams(sortParam, ALLOWED_COLUMNS) || 'provider_name ASC';
 
     // Build main query with service counts
     let sql = `

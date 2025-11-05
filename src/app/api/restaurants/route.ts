@@ -21,7 +21,9 @@ export async function GET(request: NextRequest) {
 
     // Parse sort parameter (default: restaurant_name ASC, season_name ASC)
     const sortParam = searchParams.get('sort') || 'restaurant_name,season_name';
-    const orderByClause = parseSortParams(sortParam) || 'restaurant_name ASC, season_name ASC';
+    // SECURITY: Whitelist allowed columns to prevent SQL injection
+    const ALLOWED_COLUMNS = ['id', 'restaurant_name', 'city', 'meal_type', 'season_name', 'start_date', 'end_date', 'status', 'created_at', 'updated_at'];
+    const orderByClause = parseSortParams(sortParam, ALLOWED_COLUMNS) || 'restaurant_name ASC, season_name ASC';
 
     // Build WHERE conditions manually with table qualifiers
     const whereConditions: string[] = [];

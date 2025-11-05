@@ -23,7 +23,9 @@ export async function GET(request: NextRequest) {
 
     // Parse sort parameters (default: -created_at)
     const sortParam = searchParams.get('sort') || '-created_at';
-    const orderBy = parseSortParams(sortParam);
+    // SECURITY: Whitelist allowed columns to prevent SQL injection
+    const ALLOWED_COLUMNS = ['id', 'customer_name', 'destination', 'adults', 'children', 'status', 'created_at', 'total_price'];
+    const orderBy = parseSortParams(sortParam, ALLOWED_COLUMNS);
 
     // Get recent itineraries (requests) with tenant filtering
     const sql = `

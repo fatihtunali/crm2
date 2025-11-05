@@ -1,7 +1,9 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { env } from './env';
 
+// Environment variables are validated in env.ts on app startup
 const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY || '',
+  apiKey: env.ANTHROPIC_API_KEY,
 });
 
 interface ItineraryInput {

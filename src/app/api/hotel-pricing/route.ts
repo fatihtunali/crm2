@@ -111,7 +111,9 @@ export async function GET(request: NextRequest) {
 
     // Parse sort parameters
     const sortParam = searchParams.get('sort');
-    const sortClause = parseSortParams(sortParam) || 'start_date DESC';
+    // SECURITY: Whitelist allowed columns to prevent SQL injection
+    const ALLOWED_COLUMNS = ['id', 'hotel_id', 'season_name', 'start_date', 'end_date', 'currency', 'base_meal_plan', 'status', 'created_at', 'updated_at'];
+    const sortClause = parseSortParams(sortParam, ALLOWED_COLUMNS) || 'start_date DESC';
 
     // Build WHERE clause
     const conditions: string[] = [];

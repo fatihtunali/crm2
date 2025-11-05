@@ -19,7 +19,9 @@ export async function GET(request: NextRequest) {
 
     // Sort parameters
     const sortParam = searchParams.get('sort') || 'ef.city,ef.site_name';
-    const orderByClause = parseSortParams(sortParam) || 'ef.city ASC, ef.site_name ASC';
+    // SECURITY: Whitelist allowed columns to prevent SQL injection
+    const ALLOWED_COLUMNS = ['id', 'site_name', 'city', 'description', 'status', 'created_at', 'updated_at'];
+    const orderByClause = parseSortParams(sortParam, ALLOWED_COLUMNS) || 'ef.city ASC, ef.site_name ASC';
 
     // Build WHERE conditions manually with table qualifiers
     const whereConditions: string[] = [];

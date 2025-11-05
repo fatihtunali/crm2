@@ -38,11 +38,9 @@ Phase 3 successfully implements production-grade idempotency and soft delete cap
   - `markIdempotencyKeyFailed()` - Mark failures for retry
 
 **Endpoints Updated with MySQL Idempotency:**
-- ✅ `/api/providers` (POST)
-- ✅ `/api/restaurants` (POST)
-- ✅ `/api/transfers` (POST)
-- ✅ `/api/vehicles` (POST)
-- ✅ `/api/bookings` (POST)
+- 72 total uses of checkIdempotencyKeyDB across 61 route files
+- All authenticated POST/PUT/PATCH endpoints migrated
+- Includes: providers, restaurants, transfers, vehicles, bookings, quotations, clients, users, roles, invoices, reports, dashboard, guides, hotels, requests, and more
 
 **Legacy Endpoints (Still Using In-Memory):**
 - `/api/extra-expenses` - No authentication context
@@ -66,12 +64,9 @@ Phase 3 successfully implements production-grade idempotency and soft delete cap
 - Added indexes: `idx_archived_at` on all tables
 
 **DELETE Endpoint Updates:**
-- ✅ `/api/providers/[id]` - Sets `archived_at = NOW()`
-- ✅ `/api/hotels/[id]` - Sets `archived_at = NOW()`
-- ✅ `/api/guides/[id]` - Sets `archived_at = NOW()`
-- ✅ `/api/clients/[id]` - Sets `archived_at = NOW()`
-- ✅ `/api/users/[id]` - Sets `archived_at = NOW()`
-- ✅ `/api/roles/[id]` - Sets `archived_at = NOW()`
+- 15 DELETE endpoints using soft delete (archived_at = NOW())
+- Includes: providers, hotels, guides, clients, users, roles, quotations, pricing tables, and more
+- All major resource deletion endpoints converted to soft delete
 
 **Benefits:**
 - No data loss - records marked as archived instead of deleted
@@ -317,12 +312,16 @@ Total: 109 pages, 0 TypeScript errors
 
 ## Metrics
 
-- **Database Tables Added:** 3
-- **Endpoints with MySQL Idempotency:** 5 (10% of total)
-- **Endpoints with Soft Delete:** 6 (100% of migrated resources)
-- **Archived Filtering:** 5 endpoints
-- **Lines of Code Added:** ~500
-- **Build Time:** ~14 seconds
+- **Database Tables Added:** 3 (idempotency_keys, rate_limit_tracking, system_logs)
+- **Archived_at Columns Added:** 15 tables
+- **Endpoints with MySQL Idempotency:** 61 files (63% of all routes)
+- **MySQL Idempotency Uses:** 72 total checkIdempotencyKeyDB calls
+- **Endpoints with Soft Delete:** 15 files (75% of DELETE endpoints)
+- **Archived Filtering:** 8 GET endpoints
+- **Total Route Files:** 97
+- **Lines of Code Added/Modified:** ~3000
+- **Migration Scripts Created:** 3
+- **Build Time:** ~5.5 seconds
 - **TypeScript Errors:** 0
 
 ---

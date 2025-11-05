@@ -7,6 +7,7 @@ import {
   addStandardHeaders,
 } from '@/lib/response';
 import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { checkIdempotencyKeyDB, storeIdempotencyKeyDB } from '@/middleware/idempotency-db';
 import { requirePermission } from '@/middleware/permissions';
 import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import { auditLog, AuditActions, AuditResources } from '@/middleware/audit';
@@ -286,7 +287,7 @@ export async function DELETE(request: NextRequest) {
       await conn.query('DELETE FROM quote_expenses WHERE quote_day_id = ?', [dayId]);
 
       // Then delete the day itself
-      await conn.query('DELETE FROM quote_days WHERE id = ?', [dayId]);
+      await conn.query('UPDATE quote_days SET archived_at = NOW(), updated_at = NOW() WHERE id = ?', [dayId]);
     });
 
     // AUDIT: Log day deletion

@@ -13,6 +13,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { requirePermission } from '@/middleware/permissions';
+import { checkIdempotencyKeyDB, storeIdempotencyKeyDB } from '@/middleware/idempotency-db';
 import {
   standardErrorResponse,
   ErrorCodes,

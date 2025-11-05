@@ -221,7 +221,7 @@ export async function DELETE(
 
     // Soft delete by setting status to archived
     await query(
-      'UPDATE guide_pricing SET status = ?, updated_at = NOW() WHERE id = ?',
+      'UPDATE guide_pricing SET archived_at = NOW(), updated_at = NOW() WHERE id = ?',
       ['archived', id]
     );
 

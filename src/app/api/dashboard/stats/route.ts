@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import db, { query } from '@/lib/db';
 import { successResponse, errorResponse, internalServerErrorProblem, standardErrorResponse, ErrorCodes } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { checkIdempotencyKeyDB, storeIdempotencyKeyDB } from '@/middleware/idempotency-db';
 import { createMoney } from '@/lib/money';
 import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
 

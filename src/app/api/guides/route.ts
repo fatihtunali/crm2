@@ -4,6 +4,7 @@ import { parseStandardPaginationParams, parseSortParams, buildStandardListRespon
 import { buildWhereClause, buildSearchClause, buildQuery } from '@/lib/query-builder';
 import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { checkIdempotencyKeyDB, storeIdempotencyKeyDB } from '@/middleware/idempotency-db';
 import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
 import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import { auditLog, AuditActions, AuditResources } from '@/middleware/audit';
@@ -73,6 +74,12 @@ export async function GET(request: NextRequest) {
       // SECURITY: Always filter by organization
       'g.organization_id': parseInt(tenantId)
     };
+
+    // Archive filter (Phase 3: default exclude archived)
+    const includeArchived = searchParams.get('include_archived') === 'true';
+    if (!includeArchived) {
+      filters.archived_at = null;
+    }
 
     if (statusFilter && statusFilter !== 'all') {
       filters['g.status'] = statusFilter;

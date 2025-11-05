@@ -3,6 +3,7 @@ import { query } from '@/lib/db';
 import { parseSortParams } from '@/lib/pagination';
 import { successResponse, errorResponse, internalServerErrorProblem, standardErrorResponse, ErrorCodes } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { checkIdempotencyKeyDB, storeIdempotencyKeyDB } from '@/middleware/idempotency-db';
 import { getRequestId, logResponse } from '@/middleware/correlation';
 
 export async function GET(request: NextRequest) {

@@ -9,6 +9,7 @@ import {
   addStandardHeaders
 } from '@/lib/response';
 import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { checkIdempotencyKeyDB, storeIdempotencyKeyDB } from '@/middleware/idempotency-db';
 import { requirePermission } from '@/middleware/permissions';
 import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import { auditLog, AuditActions, AuditResources } from '@/middleware/audit';
@@ -405,7 +406,7 @@ export async function DELETE(
     }
 
     // Delete the quote (cascading deletes will handle quote_days and quote_expenses)
-    await query('DELETE FROM quotes WHERE id = ? AND organization_id = ?', [
+    await query('UPDATE quotes SET archived_at = NOW(), updated_at = NOW() WHERE id = ? AND organization_id = ?', [
       id,
       parseInt(tenantId),
     ]);

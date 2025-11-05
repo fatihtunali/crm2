@@ -17,6 +17,7 @@ import {
   addStandardHeaders,
 } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { checkIdempotencyKeyDB, storeIdempotencyKeyDB } from '@/middleware/idempotency-db';
 import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
 import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import { auditLog, AuditActions, AuditResources } from '@/middleware/audit';
@@ -66,6 +67,12 @@ export async function GET(request: NextRequest) {
       // SECURITY: Always filter by organization
       'h.organization_id': parseInt(tenantId)
     };
+
+    // Archive filter (Phase 3: default exclude archived)
+    const includeArchived = searchParams.get('include_archived') === 'true';
+    if (!includeArchived) {
+      filters.archived_at = null;
+    }
 
     if (statusFilter && statusFilter !== 'all') {
       filters['h.status'] = statusFilter;

@@ -83,6 +83,12 @@ export async function GET(request: NextRequest) {
       'r.organization_id': parseInt(tenantId)
     };
 
+    // Archive filter (Phase 3: default exclude archived)
+    const includeArchived = searchParams.get('include_archived') === 'true';
+    if (!includeArchived) {
+      filters.archived_at = null;
+    }
+
     // Optional: Filter by is_system_role
     const systemRoleFilter = searchParams.get('is_system_role');
     if (systemRoleFilter !== null) {

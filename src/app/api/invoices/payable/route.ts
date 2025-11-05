@@ -4,6 +4,7 @@ import { parseStandardPaginationParams, parseSortParams, buildStandardListRespon
 import { buildWhereClause, buildSearchClause, buildQuery } from '@/lib/query-builder';
 import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { checkIdempotencyKeyDB, storeIdempotencyKeyDB } from '@/middleware/idempotency-db';
 import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
 import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import { createMoney } from '@/lib/money';
@@ -192,7 +193,7 @@ export async function POST(request: NextRequest) {
     const idempotencyKey = request.headers.get('Idempotency-Key');
     if (idempotencyKey) {
       const { checkIdempotencyKey, storeIdempotencyKey } = await import('@/middleware/idempotency');
-      const cachedResponse = await checkIdempotencyKey(request, idempotencyKey);
+      const cachedResponse = await checkIdempotencyKeyDB(request, idempotencyKey, Number(tenantId));
       if (cachedResponse) {
         return cachedResponse;
       }
@@ -288,8 +289,8 @@ export async function POST(request: NextRequest) {
 
     // Store idempotency key if provided
     if (idempotencyKey) {
-      const { storeIdempotencyKey } = await import('@/middleware/idempotency');
-      storeIdempotencyKey(idempotencyKey, NextResponse.json(invoiceWithMoney, { status: 201 }));
+      const { storeIdempotencyKeyDB } = await import('@/middleware/idempotency-db');
+      await storeIdempotencyKeyDB(idempotencyKey, NextResponse.json(invoiceWithMoney, { status: 201 }), Number(tenantId), user.userId, request);
     }
 
     // Log response

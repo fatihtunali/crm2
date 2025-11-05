@@ -266,8 +266,8 @@ export async function DELETE(
 
     // Soft delete by setting status to inactive
     await query(
-      'UPDATE intercity_transfers SET status = ?, updated_at = NOW() WHERE id = ?',
-      ['inactive', id]
+      'UPDATE intercity_transfers SET archived_at = NOW(), updated_at = NOW() WHERE id = ?',
+      [id]
     );
 
     return noContentResponse();

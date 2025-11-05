@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { checkIdempotencyKeyDB, storeIdempotencyKeyDB } from '@/middleware/idempotency-db';
 import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
 import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import { createMoney } from '@/lib/money';
@@ -58,7 +59,7 @@ export async function POST(
     const idempotencyKey = request.headers.get('Idempotency-Key');
     if (idempotencyKey) {
       const { checkIdempotencyKey, storeIdempotencyKey } = await import('@/middleware/idempotency');
-      const cachedResponse = await checkIdempotencyKey(request, idempotencyKey);
+      const cachedResponse = await checkIdempotencyKeyDB(request, idempotencyKey, Number(tenantId));
       if (cachedResponse) {
         return cachedResponse;
       }
@@ -112,8 +113,8 @@ export async function POST(
 
       // Store idempotency key even for conflict errors
       if (idempotencyKey) {
-        const { storeIdempotencyKey } = await import('@/middleware/idempotency');
-        storeIdempotencyKey(idempotencyKey, response);
+        const { storeIdempotencyKeyDB } = await import('@/middleware/idempotency-db');
+        await storeIdempotencyKeyDB(idempotencyKey, response, Number(tenantId), user.userId, request);
       }
 
       return response;
@@ -168,8 +169,8 @@ export async function POST(
 
     // Store idempotency key if provided
     if (idempotencyKey) {
-      const { storeIdempotencyKey } = await import('@/middleware/idempotency');
-      storeIdempotencyKey(idempotencyKey, NextResponse.json(invoiceWithMoney));
+      const { storeIdempotencyKeyDB } = await import('@/middleware/idempotency-db');
+      await storeIdempotencyKeyDB(idempotencyKey, NextResponse.json(invoiceWithMoney), Number(tenantId), user.userId, request);
     }
 
     logResponse(requestId, 200, Date.now() - startTime, {

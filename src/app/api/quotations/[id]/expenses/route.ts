@@ -7,6 +7,7 @@ import {
   addStandardHeaders,
 } from '@/lib/response';
 import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { checkIdempotencyKeyDB, storeIdempotencyKeyDB } from '@/middleware/idempotency-db';
 import { requirePermission } from '@/middleware/permissions';
 import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import { auditLog, AuditActions, AuditResources } from '@/middleware/audit';
@@ -377,7 +378,7 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    await query('DELETE FROM quote_expenses WHERE id = ?', [id]);
+    await query('UPDATE quote_expenses SET archived_at = NOW(), updated_at = NOW() WHERE id = ?', [id]);
 
     // AUDIT: Log expense deletion
     await auditLog(

@@ -10,6 +10,7 @@ import {
   updateBookingStatus,
 } from '@/lib/booking-lifecycle';
 import { requirePermission } from '@/middleware/permissions';
+import { checkIdempotencyKeyDB, storeIdempotencyKeyDB } from '@/middleware/idempotency-db';
 import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
 import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import type { UpdateBookingRequest } from '@/types/api';

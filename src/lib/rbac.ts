@@ -290,15 +290,17 @@ export function getPermissionsSummary(permissions: Permissions): string[] {
 }
 
 /**
- * Parse permissions from JSON string
+ * Parse permissions from JSON string or object
  * Safely parses and validates permissions from database
+ * Handles both JSON strings and already-parsed objects (MySQL JSON columns are auto-parsed)
  *
- * @param json - JSON string to parse
+ * @param json - JSON string or object to parse/validate
  * @returns Parsed permissions or null if invalid
  */
-export function parsePermissions(json: string): Permissions | null {
+export function parsePermissions(json: string | object): Permissions | null {
   try {
-    const parsed = JSON.parse(json);
+    // If already an object, use it directly (MySQL JSON columns are auto-parsed)
+    const parsed = typeof json === 'string' ? JSON.parse(json) : json;
     const validation = validatePermissionsStructure(parsed);
 
     if (!validation.isValid) {

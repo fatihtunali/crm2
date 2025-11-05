@@ -41,8 +41,10 @@ export default function Dashboard() {
           revenue: stats.revenue || { amount_minor: 0, currency: 'EUR' },
           pendingQuotes: stats.pendingQuotes || 0
         });
-        setRecentRequests(requestsData);
-        setUpcomingTours(toursData);
+
+        // Handle error responses (they won't be arrays)
+        setRecentRequests(Array.isArray(requestsData) ? requestsData : (requestsData.data || []));
+        setUpcomingTours(Array.isArray(toursData) ? toursData : (toursData.data || []));
       } catch (error) {
         console.error('Failed to fetch dashboard data:', error);
       } finally {

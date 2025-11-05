@@ -3,6 +3,26 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false, // Hide X-Powered-By header
 
+  // Suppress third-party library warnings in console
+  webpack: (config, { isServer }) => {
+    if (!isServer) {
+      // Suppress React strict mode warnings from third-party libraries
+      const originalWarn = console.warn;
+      console.warn = (...args) => {
+        const msg = args[0];
+        if (
+          typeof msg === 'string' &&
+          (msg.includes('UNSAFE_componentWillReceiveProps') ||
+           msg.includes('ModelCollapse'))
+        ) {
+          return; // Suppress this specific warning
+        }
+        originalWarn(...args);
+      };
+    }
+    return config;
+  },
+
   // Security headers
   async headers() {
     return [

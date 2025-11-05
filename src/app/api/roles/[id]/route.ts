@@ -529,7 +529,7 @@ export async function DELETE(
 
     // 8. Delete the role (CASCADE will handle related records)
     await query(
-      'DELETE FROM roles WHERE id = ? AND organization_id = ?',
+      'UPDATE roles SET archived_at = NOW(), updated_at = NOW() WHERE id = ? AND organization_id = ?',
       [roleId, parseInt(tenantId)]
     );
 

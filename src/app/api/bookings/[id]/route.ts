@@ -4,18 +4,14 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import {
-  successResponse,
-  errorResponse,
-  badRequestProblem,
-  notFoundProblem,
-  internalServerErrorProblem,
-} from '@/lib/response';
+import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import {
   getBookingById,
   updateBookingStatus,
 } from '@/lib/booking-lifecycle';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import type { UpdateBookingRequest } from '@/types/api';
 
 interface RouteParams {
@@ -32,8 +28,11 @@ export async function GET(
   request: NextRequest,
   { params }: RouteParams
 ) {
-  const { id } = await params;
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
+    const { id } = await params;
     const authResult = await requirePermission(request, 'bookings', 'read');
     if ('error' in authResult) {
       return authResult.error;
@@ -44,8 +43,10 @@ export async function GET(
 
     // Validate ID
     if (isNaN(bookingId) || bookingId <= 0) {
-      return errorResponse(
-        badRequestProblem('Invalid booking ID', `/api/bookings/${id}`)
+      return validationErrorResponse(
+        'Invalid booking ID',
+        [{ field: 'id', issue: 'invalid', message: 'Booking ID must be a positive number' }],
+        requestId
       );
     }
 
@@ -53,23 +54,35 @@ export async function GET(
     const booking = await getBookingById(bookingId);
 
     if (!booking) {
-      return errorResponse(
-        notFoundProblem(
-          `Booking with ID ${bookingId} not found`,
-          `/api/bookings/${id}`
-        )
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Booking with ID ${bookingId} not found`,
+        404,
+        undefined,
+        requestId
       );
     }
 
-    // Return booking with locked exchange rate
-    return successResponse(booking);
-  } catch (error) {
-    console.error('Error fetching booking:', error);
-    return errorResponse(
-      internalServerErrorProblem(
-        'Failed to fetch booking',
-        `/api/bookings/${id}`
-      )
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      booking_id: bookingId,
+    });
+
+    const response = NextResponse.json(booking);
+    addStandardHeaders(response, requestId);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to fetch booking',
+      500,
+      undefined,
+      requestId
     );
   }
 }
@@ -83,20 +96,43 @@ export async function PATCH(
   request: NextRequest,
   { params }: RouteParams
 ) {
-  const { id } = await params;
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
+    const { id } = await params;
     const authResult = await requirePermission(request, 'bookings', 'update');
     if ('error' in authResult) {
       return authResult.error;
     }
     const { user, tenantId } = authResult;
 
+    // Rate limiting (50 updates per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_update`,
+      50,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Update rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
+
     const bookingId = parseInt(id, 10);
 
     // Validate ID
     if (isNaN(bookingId) || bookingId <= 0) {
-      return errorResponse(
-        badRequestProblem('Invalid booking ID', `/api/bookings/${id}`)
+      return validationErrorResponse(
+        'Invalid booking ID',
+        [{ field: 'id', issue: 'invalid', message: 'Booking ID must be a positive number' }],
+        requestId
       );
     }
 
@@ -105,43 +141,58 @@ export async function PATCH(
 
     // Validate status field
     if (!body.status) {
-      return errorResponse(
-        badRequestProblem(
-          'status field is required',
-          `/api/bookings/${id}`
-        )
+      return validationErrorResponse(
+        'Invalid request data',
+        [{ field: 'status', issue: 'required', message: 'status field is required' }],
+        requestId
       );
     }
 
     // Validate status value
     if (body.status !== 'confirmed' && body.status !== 'cancelled') {
-      return errorResponse(
-        badRequestProblem(
-          'status must be either "confirmed" or "cancelled"',
-          `/api/bookings/${id}`
-        )
+      return validationErrorResponse(
+        'Invalid status value',
+        [{ field: 'status', issue: 'invalid', message: 'status must be either "confirmed" or "cancelled"' }],
+        requestId
       );
     }
 
     // Update booking status
     const updatedBooking = await updateBookingStatus(bookingId, body.status);
 
-    return successResponse(updatedBooking);
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      booking_id: bookingId,
+      new_status: body.status,
+    });
+
+    const response = NextResponse.json(updatedBooking);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    return response;
   } catch (error: any) {
-    console.error('Error updating booking:', error);
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
 
     // Handle specific error cases
     if (error.message?.includes('not found')) {
-      return errorResponse(
-        notFoundProblem(error.message, `/api/bookings/${id}`)
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        error.message,
+        404,
+        undefined,
+        requestId
       );
     }
 
-    return errorResponse(
-      internalServerErrorProblem(
-        'Failed to update booking',
-        `/api/bookings/${id}`
-      )
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to update booking',
+      500,
+      undefined,
+      requestId
     );
   }
 }

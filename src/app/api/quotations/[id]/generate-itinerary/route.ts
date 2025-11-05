@@ -1,8 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query, transaction } from '@/lib/db';
 import { generateItineraryWithAI } from '@/lib/ai';
+import {
+  standardErrorResponse,
+  validationErrorResponse,
+  ErrorCodes,
+  addStandardHeaders,
+} from '@/lib/response';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
 import { requirePermission } from '@/middleware/permissions';
-import { errorResponse, successResponse, internalServerErrorProblem } from '@/lib/response';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
+import { auditLog, AuditActions, AuditResources } from '@/middleware/audit';
 
 // Rate limiting for AI calls (in-memory, will be moved to MySQL later)
 const aiRateLimits = new Map<string, { count: number; resetTime: number }>();
@@ -34,6 +42,9 @@ export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // SECURITY: Require authentication
     const authResult = await requirePermission(request, 'quotations', 'create');
@@ -42,16 +53,34 @@ export async function POST(
     }
     const { tenantId, user } = authResult;
 
-    // SECURITY: Rate limiting for AI calls (expensive operation)
+    // Rate limiting (50 requests per hour per user for create operations)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_create`,
+      50,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Creation rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
+
+    // SECURITY: Additional rate limiting for AI calls (expensive operation)
     const rateLimitCheck = checkAIRateLimit(user.userId);
     if (!rateLimitCheck.allowed) {
-      return errorResponse({
-        type: 'https://api.crm2.com/problems/rate-limit',
-        title: 'Rate Limit Exceeded',
-        status: 429,
-        detail: `AI itinerary generation limit exceeded. Try again in ${rateLimitCheck.resetIn} minutes.`,
-        instance: request.url,
-      });
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `AI itinerary generation limit exceeded. Try again in ${rateLimitCheck.resetIn} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
     }
 
     const { id } = await params;
@@ -63,13 +92,13 @@ export async function POST(
     ) as any[];
 
     if (!quote) {
-      return errorResponse({
-        type: 'https://api.crm2.com/problems/not-found',
-        title: 'Not Found',
-        status: 404,
-        detail: 'Quote not found or you do not have access',
-        instance: request.url,
-      });
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        'Quote not found or you do not have access',
+        404,
+        undefined,
+        requestId
+      );
     }
 
     // Parse destination to get cities
@@ -232,17 +261,55 @@ export async function POST(
       return days;
     });
 
+    // AUDIT: Log AI itinerary generation
+    await auditLog(
+      parseInt(tenantId),
+      user.userId,
+      AuditActions.QUOTATION_UPDATED,
+      AuditResources.QUOTATION,
+      id.toString(),
+      {
+        ai_itinerary_generated: true,
+        days_created: generatedDays.length,
+      },
+      {
+        quote_number: quote.quote_number,
+        destination: quote.destination,
+      },
+      request
+    );
+
     // Transaction successful - return success response
-    return successResponse({
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      quote_id: id,
+      days_generated: generatedDays.length,
+    });
+
+    const response = NextResponse.json({
       success: true,
       message: 'AI-generated itinerary created successfully',
       days: generatedDays
     });
+    addStandardHeaders(response, requestId);
+    addRateLimitHeaders(response, rateLimit);
+    return response;
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error generating itinerary:', error);
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
     // SECURITY: Don't expose internal error details in production
-    return errorResponse(internalServerErrorProblem('Failed to generate itinerary with AI'));
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to generate itinerary with AI',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 

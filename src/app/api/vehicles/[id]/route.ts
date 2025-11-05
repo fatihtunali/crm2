@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { successResponse, noContentResponse, errorResponse, badRequestProblem, notFoundProblem } from '@/lib/response';
+import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
-import { handleError, NotFoundError } from '@/middleware/errorHandler';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 
 interface Vehicle {
   id: number;
@@ -31,6 +32,9 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     const { id } = await params;
     // Require tenant
@@ -38,16 +42,28 @@ export async function GET(
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { user, tenantId } = authResult;
+
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 300, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const vehicleId = parseInt(id, 10);
 
     if (isNaN(vehicleId) || vehicleId <= 0) {
-      return errorResponse(
-        badRequestProblem(
-          'Invalid vehicle ID: must be a positive integer',
-          request.url
-        )
+      return validationErrorResponse(
+        'Invalid input',
+        [{ field: 'id', issue: 'invalid', message: 'Invalid vehicle ID: must be a positive integer' }],
+        requestId
       );
     }
 
@@ -74,17 +90,34 @@ export async function GET(
     const rows = await query(sql, [vehicleId, tenantId]) as Vehicle[];
 
     if (!rows || rows.length === 0) {
-      return errorResponse(
-        notFoundProblem(
-          `Vehicle with ID ${vehicleId} not found`,
-          request.url
-        )
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Vehicle with ID ${vehicleId} not found`,
+        404,
+        undefined,
+        requestId
       );
     }
 
-    return successResponse(rows[0]);
+    const response = NextResponse.json(rows[0]);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      vehicle_id: vehicleId
+    });
+
+    return response;
   } catch (error) {
-    return handleError(error, request.url);
+    console.error('Error fetching vehicle:', error);
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Internal server error',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 
@@ -110,6 +143,9 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     const { id } = await params;
     // Require tenant
@@ -117,16 +153,28 @@ export async function PATCH(
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { user, tenantId } = authResult;
+
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 50, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const vehicleId = parseInt(id, 10);
 
     if (isNaN(vehicleId) || vehicleId <= 0) {
-      return errorResponse(
-        badRequestProblem(
-          'Invalid vehicle ID: must be a positive integer',
-          request.url
-        )
+      return validationErrorResponse(
+        'Invalid input',
+        [{ field: 'id', issue: 'invalid', message: 'Invalid vehicle ID: must be a positive integer' }],
+        requestId
       );
     }
 
@@ -137,11 +185,12 @@ export async function PATCH(
     ) as Vehicle[];
 
     if (!existingVehicles || existingVehicles.length === 0) {
-      return errorResponse(
-        notFoundProblem(
-          `Vehicle with ID ${vehicleId} not found`,
-          request.url
-        )
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Vehicle with ID ${vehicleId} not found`,
+        404,
+        undefined,
+        requestId
       );
     }
 
@@ -167,11 +216,10 @@ export async function PATCH(
 
     if (max_capacity !== undefined) {
       if (typeof max_capacity !== 'number' || max_capacity <= 0) {
-        return errorResponse(
-          badRequestProblem(
-            'Invalid max_capacity: must be a positive number',
-            request.url
-          )
+        return validationErrorResponse(
+          'Invalid input',
+          [{ field: 'max_capacity', issue: 'invalid', message: 'max_capacity must be a positive number' }],
+          requestId
         );
       }
       updates.push('max_capacity = ?');
@@ -200,11 +248,10 @@ export async function PATCH(
 
     // If no fields to update, return error
     if (updates.length === 0) {
-      return errorResponse(
-        badRequestProblem(
-          'No valid fields provided for update',
-          request.url
-        )
+      return validationErrorResponse(
+        'Invalid input',
+        [{ field: 'body', issue: 'invalid', message: 'No valid fields provided for update' }],
+        requestId
       );
     }
 
@@ -226,9 +273,25 @@ export async function PATCH(
       [vehicleId]
     ) as Vehicle[];
 
-    return successResponse(updatedVehicle);
+    const response = NextResponse.json(updatedVehicle);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      vehicle_id: vehicleId
+    });
+
+    return response;
   } catch (error) {
-    return handleError(error, request.url);
+    console.error('Error updating vehicle:', error);
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Internal server error',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 
@@ -246,6 +309,9 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     const { id } = await params;
     // Require tenant
@@ -253,16 +319,28 @@ export async function DELETE(
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { user, tenantId } = authResult;
+
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 20, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const vehicleId = parseInt(id, 10);
 
     if (isNaN(vehicleId) || vehicleId <= 0) {
-      return errorResponse(
-        badRequestProblem(
-          'Invalid vehicle ID: must be a positive integer',
-          request.url
-        )
+      return validationErrorResponse(
+        'Invalid input',
+        [{ field: 'id', issue: 'invalid', message: 'Invalid vehicle ID: must be a positive integer' }],
+        requestId
       );
     }
 
@@ -273,11 +351,12 @@ export async function DELETE(
     ) as Vehicle[];
 
     if (!existingVehicles || existingVehicles.length === 0) {
-      return errorResponse(
-        notFoundProblem(
-          `Vehicle with ID ${vehicleId} not found`,
-          request.url
-        )
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Vehicle with ID ${vehicleId} not found`,
+        404,
+        undefined,
+        requestId
       );
     }
 
@@ -287,8 +366,24 @@ export async function DELETE(
       [vehicleId, tenantId]
     );
 
-    return noContentResponse();
+    const response = new NextResponse(null, { status: 204 });
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    logResponse(requestId, 204, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      vehicle_id: vehicleId
+    });
+
+    return response;
   } catch (error) {
-    return handleError(error, request.url);
+    console.error('Error deleting vehicle:', error);
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Internal server error',
+      500,
+      undefined,
+      requestId
+    );
   }
 }

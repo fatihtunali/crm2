@@ -1,13 +1,9 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import {
-  successResponse,
-  errorResponse,
-  notFoundProblem,
-  badRequestProblem,
-  internalServerErrorProblem,
-} from '@/lib/response';
+import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import { createMoney } from '@/lib/money';
 
 // GET - Fetch a single payable invoice with items and Money types
@@ -16,20 +12,45 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const authResult = await requirePermission(request, 'invoices', 'read');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
+
+    // Rate limiting (100 requests per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}`,
+      100,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const invoiceId = id;
 
     // Validate ID
     if (!invoiceId || isNaN(parseInt(invoiceId))) {
-      return errorResponse(
-        badRequestProblem('Invalid invoice ID', `/api/invoices/payable/${invoiceId}`)
+      return standardErrorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        'Invalid invoice ID',
+        400,
+        undefined,
+        requestId
       );
     }
 
@@ -49,8 +70,12 @@ export async function GET(
     ) as any[];
 
     if (!invoice) {
-      return errorResponse(
-        notFoundProblem(`Payable invoice with ID ${invoiceId} not found`, `/api/invoices/payable/${invoiceId}`)
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Payable invoice with ID ${invoiceId} not found`,
+        404,
+        undefined,
+        requestId
       );
     }
 
@@ -75,11 +100,27 @@ export async function GET(
       items: itemsWithMoney,
     };
 
-    return successResponse(invoiceWithMoney);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(
-      internalServerErrorProblem('Failed to fetch payable invoice', `/api/invoices/payable/${id}`)
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      invoice_id: invoiceId,
+    });
+
+    const response = NextResponse.json(invoiceWithMoney);
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to fetch payable invoice',
+      500,
+      undefined,
+      requestId
     );
   }
 }
@@ -90,20 +131,45 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const authResult = await requirePermission(request, 'invoices', 'update');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
+
+    // Rate limiting (50 updates per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_update`,
+      50,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Update rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const invoiceId = id;
 
     // Validate ID
     if (!invoiceId || isNaN(parseInt(invoiceId))) {
-      return errorResponse(
-        badRequestProblem('Invalid invoice ID', `/api/invoices/payable/${invoiceId}`)
+      return standardErrorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        'Invalid invoice ID',
+        400,
+        undefined,
+        requestId
       );
     }
 
@@ -114,8 +180,12 @@ export async function PATCH(
     ) as any[];
 
     if (!existingInvoice) {
-      return errorResponse(
-        notFoundProblem(`Payable invoice with ID ${invoiceId} not found`, `/api/invoices/payable/${invoiceId}`)
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Payable invoice with ID ${invoiceId} not found`,
+        404,
+        undefined,
+        requestId
       );
     }
 
@@ -150,8 +220,12 @@ export async function PATCH(
     }
 
     if (updates.length === 0) {
-      return errorResponse(
-        badRequestProblem('No valid fields to update', `/api/invoices/payable/${invoiceId}`)
+      return standardErrorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        'No valid fields to update',
+        400,
+        undefined,
+        requestId
       );
     }
 
@@ -197,11 +271,27 @@ export async function PATCH(
       items: itemsWithMoney,
     };
 
-    return successResponse(invoiceWithMoney);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(
-      internalServerErrorProblem('Failed to update payable invoice', `/api/invoices/payable/${id}`)
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      invoice_id: invoiceId,
+    });
+
+    const response = NextResponse.json(invoiceWithMoney);
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to update payable invoice',
+      500,
+      undefined,
+      requestId
     );
   }
 }

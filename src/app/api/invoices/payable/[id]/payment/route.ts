@@ -1,14 +1,9 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import {
-  successResponse,
-  errorResponse,
-  notFoundProblem,
-  badRequestProblem,
-  conflictProblem,
-  internalServerErrorProblem,
-} from '@/lib/response';
+import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import { createMoney } from '@/lib/money';
 
 // POST - Record payment for payable invoice with idempotency and overpayment check
@@ -17,20 +12,45 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const { id } = await params;
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const authResult = await requirePermission(request, 'invoices', 'create');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
+
+    // Rate limiting (20 payment operations per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_payment`,
+      20,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Payment rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const invoiceId = id;
 
     // Validate ID
     if (!invoiceId || isNaN(parseInt(invoiceId))) {
-      return errorResponse(
-        badRequestProblem('Invalid invoice ID', `/api/invoices/payable/${invoiceId}/payment`)
+      return standardErrorResponse(
+        ErrorCodes.VALIDATION_ERROR,
+        'Invalid invoice ID',
+        400,
+        undefined,
+        requestId
       );
     }
 
@@ -49,8 +69,14 @@ export async function POST(
 
     // Validate payment amount
     if (!payment_amount || isNaN(Number(payment_amount)) || Number(payment_amount) <= 0) {
-      return errorResponse(
-        badRequestProblem('Invalid payment amount', `/api/invoices/payable/${invoiceId}/payment`)
+      return validationErrorResponse(
+        'Invalid request data',
+        [{
+          field: 'payment_amount',
+          issue: 'invalid',
+          message: 'Payment amount must be a positive number'
+        }],
+        requestId
       );
     }
 
@@ -61,8 +87,12 @@ export async function POST(
     ) as any[];
 
     if (!invoice) {
-      return errorResponse(
-        notFoundProblem(`Payable invoice with ID ${invoiceId} not found`, `/api/invoices/payable/${invoiceId}/payment`)
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Payable invoice with ID ${invoiceId} not found`,
+        404,
+        undefined,
+        requestId
       );
     }
 
@@ -72,11 +102,12 @@ export async function POST(
 
     // Check for overpayment
     if (newPaidAmount > totalAmount) {
-      const response = errorResponse(
-        conflictProblem(
-          `Payment of ${payment_amount} would result in overpayment. Total: ${totalAmount}, Already paid: ${currentPaidAmount}, Maximum allowed: ${totalAmount - currentPaidAmount}`,
-          `/api/invoices/payable/${invoiceId}/payment`
-        )
+      const response = standardErrorResponse(
+        ErrorCodes.CONFLICT,
+        `Payment of ${payment_amount} would result in overpayment. Total: ${totalAmount}, Already paid: ${currentPaidAmount}, Maximum allowed: ${totalAmount - currentPaidAmount}`,
+        409,
+        undefined,
+        requestId
       );
 
       // Store idempotency key even for conflict errors
@@ -136,19 +167,34 @@ export async function POST(
       payment_amount: createMoney(Number(payment_amount), updatedInvoice.currency || 'EUR'),
     };
 
-    const response = successResponse(invoiceWithMoney);
-
     // Store idempotency key if provided
     if (idempotencyKey) {
       const { storeIdempotencyKey } = await import('@/middleware/idempotency');
-      storeIdempotencyKey(idempotencyKey, response);
+      storeIdempotencyKey(idempotencyKey, NextResponse.json(invoiceWithMoney));
     }
 
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      invoice_id: invoiceId,
+      payment_amount: Number(payment_amount),
+    });
+
+    const response = NextResponse.json(invoiceWithMoney);
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
     return response;
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(
-      internalServerErrorProblem('Failed to record payment', `/api/invoices/payable/${id}/payment`)
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to record payment',
+      500,
+      undefined,
+      requestId
     );
   }
 }

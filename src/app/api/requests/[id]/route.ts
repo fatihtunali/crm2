@@ -1,7 +1,28 @@
-import { NextRequest } from 'next/server';
+/**
+ * Request by ID API Endpoint - Phase 1 Standards Applied
+ * - Request correlation IDs (X-Request-Id)
+ * - Rate limiting with headers
+ * - Standardized error responses with error codes
+ * - Request/response logging
+ * - RBAC enforcement
+ * - Audit logging
+ *
+ * GET    /api/requests/[id] - Get single request
+ * PATCH  /api/requests/[id] - Update request
+ * DELETE /api/requests/[id] - Soft delete request
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { successResponse, errorResponse, noContentResponse, notFoundProblem, internalServerErrorProblem } from '@/lib/response';
+import {
+  standardErrorResponse,
+  validationErrorResponse,
+  ErrorCodes,
+} from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
+import { auditLog, AuditActions, AuditResources } from '@/middleware/audit';
 import { createMoney } from '@/lib/money';
 
 // GET - Fetch single request
@@ -9,38 +30,83 @@ export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
-    // Require tenant
+    const { id } = await params;
+
+    // 1. Authenticate and get tenant
     const authResult = await requirePermission(request, 'requests', 'read');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
+    // 2. Rate limiting (300 requests per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}`,
+      300,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
+
+    // 3. Fetch request
     const [row] = await query(
       `SELECT * FROM customer_itineraries WHERE id = ? AND organization_id = ?`,
       [id, parseInt(tenantId)]
     ) as any[];
 
     if (!row) {
-      return errorResponse(
-        notFoundProblem(`Request with ID ${id} not found`, `/api/requests/${id}`)
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Request with ID ${id} not found`,
+        404,
+        undefined,
+        requestId
       );
     }
 
-    // Transform to include Money types
+    // 4. Transform to include Money types
     const transformedRequest = {
       ...row,
       total_price: createMoney(parseFloat(row.total_price || 0), 'EUR'),
       price_per_person: createMoney(parseFloat(row.price_per_person || 0), 'EUR')
     };
 
-    return successResponse(transformedRequest);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(
-      internalServerErrorProblem('Failed to fetch request', `/api/requests/${id}`)
+    // 5. Log response
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      request_id: id,
+    });
+
+    // 6. Return response with headers
+    const response = NextResponse.json(transformedRequest);
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to fetch request',
+      500,
+      undefined,
+      requestId
     );
   }
 }
@@ -50,30 +116,57 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
-    // Require tenant
+    const { id } = await params;
+
+    // 1. Authenticate and get tenant
     const authResult = await requirePermission(request, 'requests', 'update');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
-    // Check if request exists and belongs to tenant
+    // 2. Rate limiting (100 updates per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_update`,
+      100,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Update rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
+
+    // 3. Check if request exists and belongs to tenant
     const [existing] = await query(
-      `SELECT id FROM customer_itineraries WHERE id = ? AND organization_id = ?`,
+      `SELECT * FROM customer_itineraries WHERE id = ? AND organization_id = ?`,
       [id, parseInt(tenantId)]
     ) as any[];
 
     if (!existing) {
-      return errorResponse(
-        notFoundProblem(`Request with ID ${id} not found`, `/api/requests/${id}`)
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Request with ID ${id} not found`,
+        404,
+        undefined,
+        requestId
       );
     }
 
+    // 4. Parse request body
     const body = await request.json();
 
-    // Calculate price per person if adults/children/total_price are provided
+    // 5. Calculate price per person if adults/children/total_price are provided
     let pricePerPerson;
     if (body.adults !== undefined || body.children !== undefined || body.total_price !== undefined) {
       const adults = body.adults ?? existing.adults;
@@ -83,17 +176,24 @@ export async function PATCH(
       pricePerPerson = totalPax > 0 ? totalPrice / totalPax : 0;
     }
 
-    // Build update query dynamically
+    // 6. Build update query dynamically
     const updates: string[] = [];
     const values: any[] = [];
+    const changes: Record<string, any> = {};
 
     if (body.customer_name !== undefined) {
       updates.push('customer_name = ?');
       values.push(body.customer_name);
+      if (body.customer_name !== existing.customer_name) {
+        changes.customer_name = body.customer_name;
+      }
     }
     if (body.customer_email !== undefined) {
       updates.push('customer_email = ?');
       values.push(body.customer_email);
+      if (body.customer_email !== existing.customer_email) {
+        changes.customer_email = body.customer_email;
+      }
     }
     if (body.customer_phone !== undefined) {
       updates.push('customer_phone = ?');
@@ -102,6 +202,9 @@ export async function PATCH(
     if (body.destination !== undefined) {
       updates.push('destination = ?');
       values.push(body.destination);
+      if (body.destination !== existing.destination) {
+        changes.destination = body.destination;
+      }
     }
     if (body.start_date !== undefined) {
       updates.push('start_date = ?');
@@ -142,31 +245,33 @@ export async function PATCH(
     if (body.status !== undefined) {
       updates.push('status = ?');
       values.push(body.status);
+      if (body.status !== existing.status) {
+        changes.status = body.status;
+      }
     }
 
     if (updates.length === 0) {
       // No fields to update, return current state
-      const [current] = await query(
-        'SELECT * FROM customer_itineraries WHERE id = ?',
-        [id]
-      ) as any[];
-
       const transformedRequest = {
-        ...current,
-        total_price: createMoney(parseFloat(current.total_price || 0), 'EUR'),
-        price_per_person: createMoney(parseFloat(current.price_per_person || 0), 'EUR')
+        ...existing,
+        total_price: createMoney(parseFloat(existing.total_price || 0), 'EUR'),
+        price_per_person: createMoney(parseFloat(existing.price_per_person || 0), 'EUR')
       };
 
-      return successResponse(transformedRequest);
+      const response = NextResponse.json(transformedRequest);
+      response.headers.set('X-Request-Id', requestId);
+      addRateLimitHeaders(response, rateLimit);
+      return response;
     }
 
-    // Execute update
+    // 7. Execute update
+    updates.push('updated_at = NOW()');
     const sql = `UPDATE customer_itineraries SET ${updates.join(', ')} WHERE id = ?`;
     values.push(id);
 
     await query(sql, values);
 
-    // Fetch updated request
+    // 8. Fetch updated request
     const [updated] = await query(
       'SELECT * FROM customer_itineraries WHERE id = ?',
       [id]
@@ -178,11 +283,47 @@ export async function PATCH(
       price_per_person: createMoney(parseFloat(updated.price_per_person || 0), 'EUR')
     };
 
-    return successResponse(transformedRequest);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(
-      internalServerErrorProblem('Failed to update request', `/api/requests/${id}`)
+    // 9. AUDIT: Log request update
+    if (Object.keys(changes).length > 0) {
+      await auditLog(
+        parseInt(tenantId),
+        user.userId,
+        AuditActions.REQUEST_UPDATED,
+        AuditResources.REQUEST,
+        id,
+        changes,
+        {
+          uuid: existing.uuid,
+          fields_updated: Object.keys(changes),
+        },
+        request
+      );
+    }
+
+    // 10. Log response
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      request_id: id,
+      fields_updated: Object.keys(changes),
+    });
+
+    // 11. Return response with headers
+    const response = NextResponse.json(transformedRequest);
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to update request',
+      500,
+      undefined,
+      requestId
     );
   }
 }
@@ -192,38 +333,100 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
-    // Require tenant
+    const { id } = await params;
+
+    // 1. Authenticate and get tenant
     const authResult = await requirePermission(request, 'requests', 'delete');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
-    // Check if request exists and belongs to tenant
+    // 2. Rate limiting (50 deletes per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_delete`,
+      50,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Delete rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
+
+    // 3. Check if request exists and belongs to tenant
     const [existing] = await query(
-      `SELECT id FROM customer_itineraries WHERE id = ? AND organization_id = ?`,
+      `SELECT id, uuid, status FROM customer_itineraries WHERE id = ? AND organization_id = ?`,
       [id, parseInt(tenantId)]
     ) as any[];
 
     if (!existing) {
-      return errorResponse(
-        notFoundProblem(`Request with ID ${id} not found`, `/api/requests/${id}`)
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Request with ID ${id} not found`,
+        404,
+        undefined,
+        requestId
       );
     }
 
-    // Soft delete - set status to cancelled
+    // 4. Soft delete - set status to cancelled
     await query(
-      `UPDATE customer_itineraries SET status = 'cancelled' WHERE id = ?`,
+      `UPDATE customer_itineraries SET status = 'cancelled', updated_at = NOW() WHERE id = ?`,
       [id]
     );
 
-    return noContentResponse();
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(
-      internalServerErrorProblem('Failed to delete request', `/api/requests/${id}`)
+    // 5. AUDIT: Log request deletion (soft delete)
+    await auditLog(
+      parseInt(tenantId),
+      user.userId,
+      AuditActions.REQUEST_DELETED,
+      AuditResources.REQUEST,
+      id,
+      {
+        status: 'cancelled',
+        previous_status: existing.status,
+      },
+      {
+        uuid: existing.uuid,
+        deletion_type: 'soft_delete',
+      },
+      request
+    );
+
+    // 6. Log response
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      request_id: id,
+    });
+
+    // 7. Return response with headers
+    const response = NextResponse.json({ success: true });
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to delete request',
+      500,
+      undefined,
+      requestId
     );
   }
 }

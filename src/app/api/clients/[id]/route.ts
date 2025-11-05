@@ -1,7 +1,9 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { successResponse, errorResponse, notFoundProblem, internalServerErrorProblem } from '@/lib/response';
+import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 
 interface RouteParams {
   params: Promise<{
@@ -14,6 +16,9 @@ interface RouteParams {
  * Get a single client by ID
  */
 export async function GET(request: NextRequest, context: RouteParams) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const authResult = await requirePermission(request, 'clients', 'read');
@@ -31,13 +36,36 @@ export async function GET(request: NextRequest, context: RouteParams) {
     ) as any[];
 
     if (!client) {
-      return errorResponse(notFoundProblem(`Client ${clientId} not found`, request.url));
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Client ${clientId} not found`,
+        404,
+        undefined,
+        requestId
+      );
     }
 
-    return successResponse(client);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(internalServerErrorProblem(request.url));
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      client_id: clientId,
+    });
+
+    const response = NextResponse.json(client);
+    addStandardHeaders(response, requestId);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to fetch client',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 
@@ -46,6 +74,9 @@ export async function GET(request: NextRequest, context: RouteParams) {
  * Update a client
  */
 export async function PUT(request: NextRequest, context: RouteParams) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const authResult = await requirePermission(request, 'clients', 'update');
@@ -53,6 +84,24 @@ export async function PUT(request: NextRequest, context: RouteParams) {
       return authResult.error;
     }
     const { tenantId, user } = authResult;
+
+    // Rate limiting (50 updates per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_update`,
+      50,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Update rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const { id: clientId } = await context.params;
     const body = await request.json();
@@ -64,7 +113,13 @@ export async function PUT(request: NextRequest, context: RouteParams) {
     ) as any[];
 
     if (!existingClient) {
-      return errorResponse(notFoundProblem(`Client ${clientId} not found`, request.url));
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Client ${clientId} not found`,
+        404,
+        undefined,
+        requestId
+      );
     }
 
     const {
@@ -138,22 +193,39 @@ export async function PUT(request: NextRequest, context: RouteParams) {
       [clientId]
     ) as any[];
 
-    return successResponse(updatedClient);
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      client_id: clientId,
+    });
+
+    const response = NextResponse.json(updatedClient);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    return response;
   } catch (error: any) {
-    console.error('Database error:', error);
+    logResponse(requestId, error.code === 'ER_DUP_ENTRY' ? 409 : 500, Date.now() - startTime, {
+      error: error.message,
+    });
 
     // Handle duplicate email
     if (error.code === 'ER_DUP_ENTRY') {
-      return errorResponse({
-        type: 'https://api.crm2.com/problems/duplicate-email',
-        title: 'Duplicate Email',
-        status: 409,
-        detail: 'A client with this email already exists',
-        instance: request.url,
-      });
+      return standardErrorResponse(
+        ErrorCodes.CONFLICT,
+        'A client with this email already exists',
+        409,
+        undefined,
+        requestId
+      );
     }
 
-    return errorResponse(internalServerErrorProblem(request.url));
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to update client',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 
@@ -162,6 +234,9 @@ export async function PUT(request: NextRequest, context: RouteParams) {
  * Delete a client
  */
 export async function DELETE(request: NextRequest, context: RouteParams) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const authResult = await requirePermission(request, 'clients', 'delete');
@@ -169,6 +244,24 @@ export async function DELETE(request: NextRequest, context: RouteParams) {
       return authResult.error;
     }
     const { tenantId, user } = authResult;
+
+    // Rate limiting (20 deletes per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_delete`,
+      20,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Delete rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const { id: clientId } = await context.params;
 
@@ -179,18 +272,42 @@ export async function DELETE(request: NextRequest, context: RouteParams) {
     ) as any[];
 
     if (!existingClient) {
-      return errorResponse(notFoundProblem(`Client ${clientId} not found`, request.url));
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Client ${clientId} not found`,
+        404,
+        undefined,
+        requestId
+      );
     }
 
     // Delete client
     await query(
-      'DELETE FROM clients WHERE id = ? AND organization_id = ?',
+      'UPDATE clients SET archived_at = NOW(), updated_at = NOW() WHERE id = ? AND organization_id = ?',
       [clientId, parseInt(tenantId)]
     );
 
-    return successResponse({ message: 'Client deleted successfully' });
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(internalServerErrorProblem(request.url));
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      client_id: clientId,
+    });
+
+    const response = NextResponse.json({ success: true, message: 'Client deleted successfully' });
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to delete client',
+      500,
+      undefined,
+      requestId
+    );
   }
 }

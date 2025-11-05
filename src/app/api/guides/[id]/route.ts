@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { errorResponse, notFoundProblem, badRequestProblem, noContentResponse } from '@/lib/response';
+import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
-import { handleError, NotFoundError } from '@/middleware/errorHandler';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
+import { auditLog, AuditActions, AuditResources } from '@/middleware/audit';
 
 interface Guide {
   id: number;
@@ -22,39 +24,53 @@ interface RouteParams {
   }>;
 }
 
-/**
- * GET /api/guides/[id]
- * Fetch a single guide by ID
- *
- * Headers:
- * - X-Tenant-Id: Required tenant identifier
- */
+// GET /api/guides/[id] - Fetch a single guide by ID
 export async function GET(
   request: NextRequest,
   { params }: RouteParams
 ) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
-    const { id } = await params;
-    // Require tenant
+    // 1. Authenticate and get tenant
     const authResult = await requirePermission(request, 'providers', 'read');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
+    // 2. Rate limiting (300 requests per hour per user for detail endpoints)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_detail`,
+      300,
+      3600
+    );
 
-    // Validate ID
-    const guideId = parseInt(id, 10);
-    if (isNaN(guideId) || guideId <= 0) {
-      return errorResponse(
-        badRequestProblem(
-          `Invalid guide ID: ${id}`,
-          request.url
-        )
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
       );
     }
 
-    // Fetch guide with pricing information
+    const { id } = await params;
+
+    // 3. Validate ID
+    const guideId = parseInt(id, 10);
+    if (isNaN(guideId) || guideId <= 0) {
+      return validationErrorResponse(
+        'Invalid guide ID',
+        [{ field: 'id', issue: 'invalid', message: 'Guide ID must be a positive integer' }],
+        requestId
+      );
+    }
+
+    // 4. Fetch guide with pricing information
     const sql = `
       SELECT
         g.*,
@@ -79,65 +95,107 @@ export async function GET(
     const rows = await query(sql, [guideId, tenantId]) as Guide[];
 
     if (rows.length === 0) {
-      throw new NotFoundError('Guide', guideId);
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Guide with ID ${guideId} not found`,
+        404,
+        undefined,
+        requestId
+      );
     }
 
-    return NextResponse.json(rows[0]);
-  } catch (error) {
-    return handleError(error, request.url);
+    // 5. Log response
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      guide_id: guideId,
+    });
+
+    // 6. Create response with headers
+    const response = NextResponse.json(rows[0]);
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to fetch guide',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 
-/**
- * PATCH /api/guides/[id]
- * Update a guide by ID (partial update)
- *
- * Headers:
- * - X-Tenant-Id: Required tenant identifier
- *
- * Body (all fields optional):
- * - city: string
- * - language: string
- * - description: string
- * - provider_id: number
- * - status: string
- */
+// PATCH /api/guides/[id] - Update a guide by ID (partial update)
 export async function PATCH(
   request: NextRequest,
   { params }: RouteParams
 ) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
-    const { id } = await params;
-    // Require tenant
+    // 1. Authenticate and get tenant
     const authResult = await requirePermission(request, 'providers', 'update');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
+    // 2. Rate limiting (50 updates per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_update`,
+      50,
+      3600
+    );
 
-    // Validate ID
-    const guideId = parseInt(id, 10);
-    if (isNaN(guideId) || guideId <= 0) {
-      return errorResponse(
-        badRequestProblem(
-          `Invalid guide ID: ${id}`,
-          request.url
-        )
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Update rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
       );
     }
 
-    // Check if guide exists and belongs to tenant
+    const { id } = await params;
+
+    // 3. Validate ID
+    const guideId = parseInt(id, 10);
+    if (isNaN(guideId) || guideId <= 0) {
+      return validationErrorResponse(
+        'Invalid guide ID',
+        [{ field: 'id', issue: 'invalid', message: 'Guide ID must be a positive integer' }],
+        requestId
+      );
+    }
+
+    // 4. Check if guide exists and belongs to tenant
     const existingGuides = await query(
-      'SELECT id FROM guides WHERE id = ? AND organization_id = ?',
+      'SELECT * FROM guides WHERE id = ? AND organization_id = ?',
       [guideId, tenantId]
     ) as Guide[];
 
     if (existingGuides.length === 0) {
-      throw new NotFoundError('Guide', guideId);
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Guide with ID ${guideId} not found`,
+        404,
+        undefined,
+        requestId
+      );
     }
 
-    // Parse request body
+    const existingGuide = existingGuides[0];
+
+    // 5. Parse request body
     const body = await request.json();
     const {
       city,
@@ -147,7 +205,7 @@ export async function PATCH(
       status,
     } = body;
 
-    // Build dynamic UPDATE query based on provided fields
+    // 6. Build dynamic UPDATE query based on provided fields
     const updates: string[] = [];
     const values: any[] = [];
 
@@ -178,11 +236,10 @@ export async function PATCH(
 
     // If no fields to update, return error
     if (updates.length === 0) {
-      return errorResponse(
-        badRequestProblem(
-          'No fields to update',
-          request.url
-        )
+      return validationErrorResponse(
+        'No valid fields to update',
+        [{ field: 'body', issue: 'empty', message: 'At least one field must be provided for update' }],
+        requestId
       );
     }
 
@@ -192,7 +249,7 @@ export async function PATCH(
     // Add ID and tenant ID to values
     values.push(guideId, tenantId);
 
-    // Execute update
+    // 7. Execute update
     const updateSql = `
       UPDATE guides
       SET ${updates.join(', ')}
@@ -201,69 +258,171 @@ export async function PATCH(
 
     await query(updateSql, values);
 
-    // Fetch and return updated guide
+    // 8. Fetch and return updated guide
     const [updatedGuide] = await query(
       'SELECT * FROM guides WHERE id = ?',
       [guideId]
     ) as Guide[];
 
-    return NextResponse.json(updatedGuide);
-  } catch (error) {
-    return handleError(error, request.url);
+    // 9. AUDIT: Log guide update
+    const changes: Record<string, any> = {};
+    if (city !== undefined && city !== existingGuide.city) changes.city = city;
+    if (language !== undefined && language !== existingGuide.language) changes.language = language;
+    if (status !== undefined && status !== existingGuide.status) changes.status = status;
+
+    await auditLog(
+      parseInt(tenantId),
+      user.userId,
+      AuditActions.PROVIDER_UPDATED,
+      AuditResources.PROVIDER,
+      guideId.toString(),
+      changes,
+      {
+        provider_type: 'guide',
+        fields_updated: Object.keys(changes),
+      },
+      request
+    );
+
+    // 10. Log response
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      guide_id: guideId,
+    });
+
+    const response = NextResponse.json(updatedGuide);
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to update guide',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 
-/**
- * DELETE /api/guides/[id]
- * Soft delete (archive) a guide by ID
- *
- * Headers:
- * - X-Tenant-Id: Required tenant identifier
- */
+// DELETE /api/guides/[id] - Soft delete (archive) a guide by ID
 export async function DELETE(
   request: NextRequest,
   { params }: RouteParams
 ) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
-    const { id } = await params;
-    // Require tenant
+    // 1. Authenticate and get tenant
     const authResult = await requirePermission(request, 'providers', 'delete');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
+    // 2. Rate limiting (20 deletes per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_delete`,
+      20,
+      3600
+    );
 
-    // Validate ID
-    const guideId = parseInt(id, 10);
-    if (isNaN(guideId) || guideId <= 0) {
-      return errorResponse(
-        badRequestProblem(
-          `Invalid guide ID: ${id}`,
-          request.url
-        )
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Delete rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
       );
     }
 
-    // Check if guide exists and belongs to tenant
+    const { id } = await params;
+
+    // 3. Validate ID
+    const guideId = parseInt(id, 10);
+    if (isNaN(guideId) || guideId <= 0) {
+      return validationErrorResponse(
+        'Invalid guide ID',
+        [{ field: 'id', issue: 'invalid', message: 'Guide ID must be a positive integer' }],
+        requestId
+      );
+    }
+
+    // 4. Check if guide exists and belongs to tenant
     const existingGuides = await query(
-      'SELECT id FROM guides WHERE id = ? AND organization_id = ?',
+      'SELECT * FROM guides WHERE id = ? AND organization_id = ?',
       [guideId, tenantId]
     ) as Guide[];
 
     if (existingGuides.length === 0) {
-      throw new NotFoundError('Guide', guideId);
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Guide with ID ${guideId} not found`,
+        404,
+        undefined,
+        requestId
+      );
     }
 
-    // Soft delete (set status to inactive)
+    const existingGuide = existingGuides[0];
+
+    // 5. Soft delete (set status to inactive)
     await query(
-      'UPDATE guides SET status = ?, updated_at = NOW() WHERE id = ? AND organization_id = ?',
-      ['inactive', guideId, tenantId]
+      'UPDATE guides SET archived_at = NOW(), updated_at = NOW() WHERE id = ? AND organization_id = ?',
+      [guideId, tenantId]
     );
 
+    // 6. AUDIT: Log guide deletion
+    await auditLog(
+      parseInt(tenantId),
+      user.userId,
+      AuditActions.PROVIDER_DELETED,
+      AuditResources.PROVIDER,
+      guideId.toString(),
+      {
+        status: 'inactive',
+        previous_status: existingGuide.status,
+      },
+      {
+        provider_type: 'guide',
+        city: existingGuide.city,
+        language: existingGuide.language,
+        deletion_type: 'soft_delete',
+      },
+      request
+    );
+
+    // 7. Log response
+    logResponse(requestId, 204, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      guide_id: guideId,
+    });
+
     // Return 204 No Content
-    return noContentResponse();
-  } catch (error) {
-    return handleError(error, request.url);
+    const response = new NextResponse(null, { status: 204 });
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to delete guide',
+      500,
+      undefined,
+      requestId
+    );
   }
 }

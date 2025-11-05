@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { successResponse, noContentResponse, errorResponse, notFoundProblem, internalServerErrorProblem, badRequestProblem } from '@/lib/response';
+import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 
 interface RouteContext {
   params: Promise<{
@@ -14,6 +16,9 @@ export async function GET(
   request: NextRequest,
   context: RouteContext
 ) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     const { id } = await context.params;
     // Enforce tenant scoping
@@ -21,13 +26,29 @@ export async function GET(
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { user, tenantId } = authResult;
 
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 300, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     // Validate ID
     const providerId = parseInt(id, 10);
     if (isNaN(providerId)) {
-      return errorResponse(badRequestProblem('Invalid provider ID'));
+      return validationErrorResponse(
+        'Invalid provider ID',
+        [{ field: 'id', issue: 'invalid_format', message: 'Provider ID must be a valid number' }],
+        requestId
+      );
     }
 
     // Fetch provider with tenant scoping
@@ -51,18 +72,34 @@ export async function GET(
     ) as any[];
 
     if (!provider) {
-      return errorResponse(
-        notFoundProblem(
-          `Provider with ID ${providerId} not found`,
-          `/api/providers/${providerId}`
-        )
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Provider with ID ${providerId} not found`,
+        404,
+        undefined,
+        requestId
       );
     }
 
-    return successResponse(provider);
+    const response = NextResponse.json(provider);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      provider_id: providerId
+    });
+
+    return response;
   } catch (error) {
     console.error('Error fetching provider:', error);
-    return errorResponse(internalServerErrorProblem('Failed to fetch provider'));
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Internal server error',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 
@@ -71,6 +108,9 @@ export async function PATCH(
   request: NextRequest,
   context: RouteContext
 ) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     const { id } = await context.params;
     // Enforce tenant scoping
@@ -78,13 +118,29 @@ export async function PATCH(
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { user, tenantId } = authResult;
 
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 50, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     // Validate ID
     const providerId = parseInt(id, 10);
     if (isNaN(providerId)) {
-      return errorResponse(badRequestProblem('Invalid provider ID'));
+      return validationErrorResponse(
+        'Invalid provider ID',
+        [{ field: 'id', issue: 'invalid_format', message: 'Provider ID must be a valid number' }],
+        requestId
+      );
     }
 
     // Check if provider exists and belongs to tenant
@@ -94,11 +150,12 @@ export async function PATCH(
     ) as any[];
 
     if (!existingProvider) {
-      return errorResponse(
-        notFoundProblem(
-          `Provider with ID ${providerId} not found`,
-          `/api/providers/${providerId}`
-        )
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Provider with ID ${providerId} not found`,
+        404,
+        undefined,
+        requestId
       );
     }
 
@@ -128,7 +185,11 @@ export async function PATCH(
     }
 
     if (updates.length === 0) {
-      return errorResponse(badRequestProblem('No valid fields to update'));
+      return validationErrorResponse(
+        'No valid fields to update',
+        [{ field: 'body', issue: 'no_updates', message: 'At least one field must be provided for update' }],
+        requestId
+      );
     }
 
     // Add updated_at timestamp
@@ -150,10 +211,25 @@ export async function PATCH(
       [providerId, tenantId]
     ) as any[];
 
-    return successResponse(updatedProvider);
+    const response = NextResponse.json(updatedProvider);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      provider_id: providerId
+    });
+
+    return response;
   } catch (error) {
     console.error('Error updating provider:', error);
-    return errorResponse(internalServerErrorProblem('Failed to update provider'));
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Internal server error',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 
@@ -162,6 +238,9 @@ export async function DELETE(
   request: NextRequest,
   context: RouteContext
 ) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     const { id } = await context.params;
     // Enforce tenant scoping
@@ -169,13 +248,29 @@ export async function DELETE(
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { user, tenantId } = authResult;
 
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 20, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     // Validate ID
     const providerId = parseInt(id, 10);
     if (isNaN(providerId)) {
-      return errorResponse(badRequestProblem('Invalid provider ID'));
+      return validationErrorResponse(
+        'Invalid provider ID',
+        [{ field: 'id', issue: 'invalid_format', message: 'Provider ID must be a valid number' }],
+        requestId
+      );
     }
 
     // Check if provider exists and belongs to tenant
@@ -185,24 +280,40 @@ export async function DELETE(
     ) as any[];
 
     if (!existingProvider) {
-      return errorResponse(
-        notFoundProblem(
-          `Provider with ID ${providerId} not found`,
-          `/api/providers/${providerId}`
-        )
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Provider with ID ${providerId} not found`,
+        404,
+        undefined,
+        requestId
       );
     }
 
-    // Soft delete by setting status to 'inactive'
+    // Soft delete by setting archived_at timestamp
     await query(
-      'UPDATE providers SET status = ?, updated_at = NOW() WHERE id = ? AND organization_id = ?',
-      ['inactive', providerId, tenantId]
+      'UPDATE providers SET archived_at = NOW(), updated_at = NOW() WHERE id = ? AND organization_id = ?',
+      [providerId, tenantId]
     );
 
     // Return 204 No Content
-    return noContentResponse();
+    const response = new NextResponse(null, { status: 204 });
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    logResponse(requestId, 204, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      provider_id: providerId
+    });
+
+    return response;
   } catch (error) {
     console.error('Error deleting provider:', error);
-    return errorResponse(internalServerErrorProblem('Failed to delete provider'));
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Internal server error',
+      500,
+      undefined,
+      requestId
+    );
   }
 }

@@ -1,39 +1,63 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import {
-  successResponse,
-  errorResponse,
-  noContentResponse,
-  notFoundProblem,
-  badRequestProblem,
-  internalServerErrorProblem,
+  standardErrorResponse,
+  validationErrorResponse,
+  ErrorCodes,
+  addStandardHeaders,
 } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
+import { auditLog, AuditActions, AuditResources } from '@/middleware/audit';
 
 // GET - Fetch hotel by ID
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
-    // Require tenant
+    // 1. Authenticate and get tenant
     const authResult = await requirePermission(request, 'providers', 'read');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
-    const hotelId = id;
+    // 2. Rate limiting (300 requests per hour per user for detail endpoints)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_detail`,
+      300,
+      3600
+    );
 
-    // Validate ID
-    if (!hotelId || isNaN(parseInt(hotelId))) {
-      return errorResponse(
-        badRequestProblem('Invalid hotel ID', `/api/hotels/${hotelId}`)
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
       );
     }
 
-    // Fetch hotel with current pricing
+    const { id } = await params;
+    const hotelId = id;
+
+    // 3. Validate ID
+    if (!hotelId || isNaN(parseInt(hotelId))) {
+      return validationErrorResponse(
+        'Invalid hotel ID',
+        [{ field: 'id', issue: 'invalid', message: 'Hotel ID must be a valid number' }],
+        requestId
+      );
+    }
+
+    // 4. Fetch hotel with current pricing
     const [hotel] = await query(
       `SELECT
         h.*,
@@ -55,22 +79,44 @@ export async function GET(
       LEFT JOIN hotel_pricing hp ON h.id = hp.hotel_id
         AND hp.status = 'active'
         AND CURDATE() BETWEEN hp.start_date AND hp.end_date
-      WHERE h.id = ?
+      WHERE h.id = ? AND h.organization_id = ?
       LIMIT 1`,
-      [hotelId]
+      [hotelId, parseInt(tenantId)]
     ) as any[];
 
     if (!hotel) {
-      return errorResponse(
-        notFoundProblem(`Hotel with ID ${hotelId} not found`, `/api/hotels/${hotelId}`)
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Hotel with ID ${hotelId} not found`,
+        404,
+        undefined,
+        requestId
       );
     }
 
-    return successResponse(hotel);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(
-      internalServerErrorProblem('Failed to fetch hotel', `/api/hotels/${id}`)
+    // 5. Log response
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      hotel_id: hotelId,
+    });
+
+    // 6. Create response with headers
+    const response = NextResponse.json(hotel);
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to fetch hotel',
+      500,
+      undefined,
+      requestId
     );
   }
 }
@@ -80,39 +126,66 @@ export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
-    // Require tenant
+    // 1. Authenticate and get tenant
     const authResult = await requirePermission(request, 'providers', 'update');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
-    const hotelId = id;
+    // 2. Rate limiting (50 updates per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_update`,
+      50,
+      3600
+    );
 
-    // Validate ID
-    if (!hotelId || isNaN(parseInt(hotelId))) {
-      return errorResponse(
-        badRequestProblem('Invalid hotel ID', `/api/hotels/${hotelId}`)
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Update rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
       );
     }
 
-    // Check if hotel exists
+    const { id } = await params;
+    const hotelId = id;
+
+    // 3. Validate ID
+    if (!hotelId || isNaN(parseInt(hotelId))) {
+      return validationErrorResponse(
+        'Invalid hotel ID',
+        [{ field: 'id', issue: 'invalid', message: 'Hotel ID must be a valid number' }],
+        requestId
+      );
+    }
+
+    // 4. Check if hotel exists
     const [existingHotel] = await query(
-      'SELECT id FROM hotels WHERE id = ?',
-      [hotelId]
+      'SELECT * FROM hotels WHERE id = ? AND organization_id = ?',
+      [hotelId, parseInt(tenantId)]
     ) as any[];
 
     if (!existingHotel) {
-      return errorResponse(
-        notFoundProblem(`Hotel with ID ${hotelId} not found`, `/api/hotels/${hotelId}`)
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Hotel with ID ${hotelId} not found`,
+        404,
+        undefined,
+        requestId
       );
     }
 
     const body = await request.json();
 
-    // Build dynamic update query for partial updates
+    // 5. Build dynamic update query for partial updates
     const allowedFields = [
       'google_place_id',
       'organization_id',
@@ -154,8 +227,10 @@ export async function PATCH(
     }
 
     if (updates.length === 0) {
-      return errorResponse(
-        badRequestProblem('No valid fields to update', `/api/hotels/${hotelId}`)
+      return validationErrorResponse(
+        'No valid fields to update',
+        [{ field: 'body', issue: 'empty', message: 'At least one field must be provided for update' }],
+        requestId
       );
     }
 
@@ -164,23 +239,63 @@ export async function PATCH(
 
     // Add hotel ID to values for WHERE clause
     values.push(hotelId);
+    values.push(parseInt(tenantId));
 
     await query(
-      `UPDATE hotels SET ${updates.join(', ')} WHERE id = ?`,
+      `UPDATE hotels SET ${updates.join(', ')} WHERE id = ? AND organization_id = ?`,
       values
     );
 
-    // Fetch and return the updated hotel
+    // 6. Fetch and return the updated hotel
     const [updatedHotel] = await query(
       'SELECT * FROM hotels WHERE id = ?',
       [hotelId]
     ) as any[];
 
-    return successResponse(updatedHotel);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(
-      internalServerErrorProblem('Failed to update hotel', `/api/hotels/${id}`)
+    // 7. AUDIT: Log hotel update
+    const changes: Record<string, any> = {};
+    for (const field of allowedFields) {
+      if (body[field] !== undefined && body[field] !== existingHotel[field]) {
+        changes[field] = body[field];
+      }
+    }
+
+    await auditLog(
+      parseInt(tenantId),
+      user.userId,
+      AuditActions.PROVIDER_UPDATED,
+      AuditResources.PROVIDER,
+      hotelId.toString(),
+      changes,
+      {
+        provider_type: 'hotel',
+        fields_updated: Object.keys(changes),
+      },
+      request
+    );
+
+    // 8. Log response
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      hotel_id: hotelId,
+    });
+
+    const response = NextResponse.json(updatedHotel);
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to update hotel',
+      500,
+      undefined,
+      requestId
     );
   }
 }
@@ -190,56 +305,119 @@ export async function DELETE(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
-  const { id } = await params;
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
-    // Require tenant
+    // 1. Authenticate and get tenant
     const authResult = await requirePermission(request, 'providers', 'delete');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
-    const hotelId = id;
+    // 2. Rate limiting (20 deletes per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_delete`,
+      20,
+      3600
+    );
 
-    // Validate ID
-    if (!hotelId || isNaN(parseInt(hotelId))) {
-      return errorResponse(
-        badRequestProblem('Invalid hotel ID', `/api/hotels/${hotelId}`)
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Delete rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
       );
     }
 
-    // Check if hotel exists
+    const { id } = await params;
+    const hotelId = id;
+
+    // 3. Validate ID
+    if (!hotelId || isNaN(parseInt(hotelId))) {
+      return validationErrorResponse(
+        'Invalid hotel ID',
+        [{ field: 'id', issue: 'invalid', message: 'Hotel ID must be a valid number' }],
+        requestId
+      );
+    }
+
+    // 4. Check if hotel exists
     const [existingHotel] = await query(
-      'SELECT id FROM hotels WHERE id = ?',
-      [hotelId]
+      'SELECT * FROM hotels WHERE id = ? AND organization_id = ?',
+      [hotelId, parseInt(tenantId)]
     ) as any[];
 
     if (!existingHotel) {
-      return errorResponse(
-        notFoundProblem(`Hotel with ID ${hotelId} not found`, `/api/hotels/${hotelId}`)
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Hotel with ID ${hotelId} not found`,
+        404,
+        undefined,
+        requestId
       );
     }
 
-    // Check if hard delete is requested via query parameter
+    // 5. Check if hard delete is requested via query parameter
     const { searchParams } = new URL(request.url);
     const hardDelete = searchParams.get('hard') === 'true';
 
     if (hardDelete) {
       // Hard delete - permanently remove from database
-      await query('DELETE FROM hotels WHERE id = ?', [hotelId]);
+      await query('UPDATE hotels SET archived_at = NOW(), updated_at = NOW() WHERE id = ? AND organization_id = ?', [hotelId, parseInt(tenantId)]);
     } else {
       // Soft delete - set status to inactive
       await query(
-        'UPDATE hotels SET status = ?, updated_at = NOW() WHERE id = ?',
-        ['inactive', hotelId]
+        'UPDATE hotels SET archived_at = NOW(), updated_at = NOW() WHERE id = ? AND organization_id = ?',
+        ['inactive', hotelId, parseInt(tenantId)]
       );
     }
 
-    return noContentResponse();
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(
-      internalServerErrorProblem('Failed to delete hotel', `/api/hotels/${id}`)
+    // 6. AUDIT: Log hotel deletion
+    await auditLog(
+      parseInt(tenantId),
+      user.userId,
+      AuditActions.PROVIDER_DELETED,
+      AuditResources.PROVIDER,
+      hotelId.toString(),
+      {
+        status: hardDelete ? 'deleted' : 'inactive',
+        previous_status: existingHotel.status,
+      },
+      {
+        provider_type: 'hotel',
+        hotel_name: existingHotel.hotel_name,
+        deletion_type: hardDelete ? 'hard_delete' : 'soft_delete',
+      },
+      request
+    );
+
+    // 7. Log response
+    logResponse(requestId, 204, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      hotel_id: hotelId,
+    });
+
+    const response = new NextResponse(null, { status: 204 });
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to delete hotel',
+      500,
+      undefined,
+      requestId
     );
   }
 }

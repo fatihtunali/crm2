@@ -3,7 +3,7 @@ import { query } from '@/lib/db';
 import { parseStandardPaginationParams, buildStandardListResponse } from '@/lib/pagination';
 import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
-import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
+import { checkIdempotencyKeyDB, storeIdempotencyKeyDB, markIdempotencyKeyProcessing } from '@/middleware/idempotency-db';
 import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
 import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import type { PagedResponse } from '@/types/api';
@@ -277,7 +277,7 @@ export async function POST(request: NextRequest) {
     // Check idempotency key
     const idempotencyKey = request.headers.get('Idempotency-Key');
     if (idempotencyKey) {
-      const cachedResponse = await checkIdempotencyKey(request, idempotencyKey);
+      const cachedResponse = await checkIdempotencyKeyDB(request, idempotencyKey, Number(tenantId));
       if (cachedResponse) {
         return cachedResponse;
       }
@@ -351,7 +351,7 @@ export async function POST(request: NextRequest) {
 
     // Store idempotency key if provided
     if (idempotencyKey) {
-      storeIdempotencyKey(idempotencyKey, response);
+      await storeIdempotencyKeyDB(idempotencyKey, response, Number(tenantId), user.userId, request);
     }
 
     logResponse(requestId, 201, Date.now() - startTime, {

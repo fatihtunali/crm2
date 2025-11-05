@@ -6,7 +6,7 @@ import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandard
 import { requirePermission } from '@/middleware/permissions';
 import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
 import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
-import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
+import { checkIdempotencyKeyDB, storeIdempotencyKeyDB } from '@/middleware/idempotency-db';
 
 // GET - Fetch all providers with pagination, search, and filters
 export async function GET(request: NextRequest) {
@@ -43,6 +43,12 @@ export async function GET(request: NextRequest) {
     const filters: Record<string, any> = {
       organization_id: tenantId // Tenant scoping
     };
+
+    // Archive filter (default: exclude archived)
+    const includeArchived = searchParams.get('include_archived') === 'true';
+    if (!includeArchived) {
+      filters.archived_at = null; // Only show non-archived by default
+    }
 
     // Exclude hotel and guide providers only if include_all is not set
     // This allows forms to fetch all providers while the list page filters them
@@ -199,7 +205,7 @@ export async function POST(request: NextRequest) {
     // Check idempotency key
     const idempotencyKey = request.headers.get('Idempotency-Key');
     if (idempotencyKey) {
-      const cachedResponse = await checkIdempotencyKey(request, idempotencyKey);
+      const cachedResponse = await checkIdempotencyKeyDB(request, idempotencyKey, Number(tenantId));
       if (cachedResponse) {
         return cachedResponse;
       }
@@ -277,7 +283,7 @@ export async function POST(request: NextRequest) {
 
     // Store idempotency key if provided
     if (idempotencyKey) {
-      storeIdempotencyKey(idempotencyKey, response);
+      await storeIdempotencyKeyDB(idempotencyKey, response, Number(tenantId), user.userId, request);
     }
 
     logResponse(requestId, 201, Date.now() - startTime, {

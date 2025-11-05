@@ -5,7 +5,7 @@ import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandard
 import { requirePermission } from '@/middleware/permissions';
 import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
 import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
-import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
+import { checkIdempotencyKeyDB, storeIdempotencyKeyDB, markIdempotencyKeyProcessing } from '@/middleware/idempotency-db';
 import { toMinorUnits, fromMinorUnits } from '@/lib/money';
 import type { PagedResponse } from '@/types/api';
 
@@ -257,7 +257,7 @@ export async function POST(request: NextRequest) {
     // Check for idempotency key
     const idempotencyKey = request.headers.get('Idempotency-Key');
     if (idempotencyKey) {
-      const cachedResponse = await checkIdempotencyKey(request, idempotencyKey);
+      const cachedResponse = await checkIdempotencyKeyDB(request, idempotencyKey, Number(tenantId));
       if (cachedResponse) {
         return cachedResponse;
       }
@@ -338,7 +338,7 @@ export async function POST(request: NextRequest) {
     addStandardHeaders(response, requestId);
 
     if (idempotencyKey) {
-      storeIdempotencyKey(idempotencyKey, response);
+      await storeIdempotencyKeyDB(idempotencyKey, response, Number(tenantId), user.userId, request);
     }
 
     logResponse(requestId, 201, Date.now() - startTime, {

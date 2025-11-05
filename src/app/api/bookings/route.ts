@@ -11,7 +11,7 @@ import {
   getBookings,
   getBookingsCount,
 } from '@/lib/booking-lifecycle';
-import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
+import { checkIdempotencyKeyDB, storeIdempotencyKeyDB, markIdempotencyKeyProcessing } from '@/middleware/idempotency-db';
 import { requirePermission } from '@/middleware/permissions';
 import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
 import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
@@ -146,7 +146,7 @@ export async function POST(request: NextRequest) {
     }
 
     // Check if this request was already processed
-    const cachedResponse = await checkIdempotencyKey(request, idempotencyKey);
+    const cachedResponse = await checkIdempotencyKeyDB(request, idempotencyKey, Number(tenantId));
     if (cachedResponse) {
       return cachedResponse;
     }
@@ -184,7 +184,7 @@ export async function POST(request: NextRequest) {
     addStandardHeaders(response, requestId);
 
     // Store idempotency key
-    storeIdempotencyKey(idempotencyKey, response);
+    await storeIdempotencyKeyDB(idempotencyKey, response, Number(tenantId), user.userId, request);
 
     return response;
   } catch (error: any) {

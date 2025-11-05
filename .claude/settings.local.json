@@ -2,7 +2,12 @@
   "permissions": {
     "allow": [
       "Bash(git commit:*)",
-      "Bash(python3:*)"
+      "Bash(python3:*)",
+      "Bash(python:*)",
+      "Bash(git checkout:*)",
+      "Bash(node batch-update-endpoints.js:*)",
+      "Bash(find:*)",
+      "Bash(npm run dev:*)"
     ],
     "deny": [],
     "ask": []

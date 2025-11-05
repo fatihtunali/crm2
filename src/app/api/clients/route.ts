@@ -1,27 +1,37 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { parsePaginationParams, parseSortParams, buildPagedResponse } from '@/lib/pagination';
+import { parseStandardPaginationParams, buildStandardListResponse, parseSortParams } from '@/lib/pagination';
 import { buildWhereClause, buildSearchClause, combineWhereAndSearch } from '@/lib/query-builder';
-import { successResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
+import { standardErrorResponse, validationErrorResponse, ErrorCodes } from '@/lib/response';
 import { requireTenant } from '@/middleware/tenancy';
+import { getRequestId, logResponse } from '@/middleware/correlation';
 
 /**
  * GET /api/clients
  * List all clients with pagination, filtering, and search
  */
 export async function GET(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+      return standardErrorResponse(
+        ErrorCodes.AUTHENTICATION_REQUIRED,
+        tenantResult.error.detail || 'Authentication required',
+        tenantResult.error.status,
+        undefined,
+        requestId
+      );
     }
-    const { tenantId } = tenantResult;
+    const { tenantId, user } = tenantResult;
 
     const { searchParams } = new URL(request.url);
 
-    // Parse pagination parameters
-    const { page, pageSize, offset } = parsePaginationParams(searchParams);
+    // Parse pagination parameters (supports both old and new format)
+    const { page, pageSize, offset } = parseStandardPaginationParams(searchParams);
 
     // Parse sort parameters (default: -created_at)
     const sortParam = searchParams.get('sort') || '-created_at';
@@ -121,13 +131,41 @@ export async function GET(request: NextRequest) {
 
     const total = (countResult as any)[0].total;
 
-    // Build paged response
-    const pagedResponse = buildPagedResponse(rows, total, page, pageSize);
+    // Build base URL for links
+    const url = new URL(request.url);
+    const baseUrl = `${url.protocol}//${url.host}${url.pathname}`;
 
-    return successResponse(pagedResponse);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(internalServerErrorProblem(request.url));
+    // Extract filters for metadata
+    const appliedFilters: Record<string, any> = {};
+    if (statusFilter && statusFilter !== 'all') appliedFilters.status = statusFilter;
+    if (clientTypeFilter && clientTypeFilter !== 'all') appliedFilters.client_type = clientTypeFilter;
+    if (nationalityFilter && nationalityFilter !== 'all') appliedFilters.nationality = nationalityFilter;
+    if (searchTerm) appliedFilters.search = searchTerm;
+    if (sortParam !== '-created_at') appliedFilters.sort = sortParam;
+
+    const responseData = buildStandardListResponse(rows, total, page, pageSize, baseUrl, appliedFilters);
+
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      results_count: (rows as any[]).length,
+    });
+
+    const response = NextResponse.json(responseData);
+    response.headers.set('X-Request-Id', requestId);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to fetch clients',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 
@@ -136,13 +174,22 @@ export async function GET(request: NextRequest) {
  * Create a new client
  */
 export async function POST(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+      return standardErrorResponse(
+        ErrorCodes.AUTHENTICATION_REQUIRED,
+        tenantResult.error.detail || 'Authentication required',
+        tenantResult.error.status,
+        undefined,
+        requestId
+      );
     }
-    const { tenantId } = tenantResult;
+    const { tenantId, user } = tenantResult;
 
     const body = await request.json();
 
@@ -167,14 +214,20 @@ export async function POST(request: NextRequest) {
     } = body;
 
     // Validate required fields
-    if (!first_name || !last_name || !email) {
-      return errorResponse({
-        type: 'https://api.crm2.com/problems/validation-error',
-        title: 'Validation Error',
-        status: 400,
-        detail: 'Missing required fields: first_name, last_name, email',
-        instance: request.url,
-      });
+    const errors: Array<{ field: string; issue: string; message?: string }> = [];
+
+    if (!first_name) {
+      errors.push({ field: 'first_name', issue: 'required', message: 'First name is required' });
+    }
+    if (!last_name) {
+      errors.push({ field: 'last_name', issue: 'required', message: 'Last name is required' });
+    }
+    if (!email) {
+      errors.push({ field: 'email', issue: 'required', message: 'Email is required' });
+    }
+
+    if (errors.length > 0) {
+      return validationErrorResponse('Invalid client data', errors, requestId);
     }
 
     // Generate UUID
@@ -204,21 +257,37 @@ export async function POST(request: NextRequest) {
       [clientId]
     ) as any[];
 
-    return successResponse(client, 201);
+    logResponse(requestId, 201, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      client_id: clientId,
+    });
+
+    const response = NextResponse.json(client, { status: 201 });
+    response.headers.set('X-Request-Id', requestId);
+    return response;
   } catch (error: any) {
-    console.error('Database error:', error);
+    logResponse(requestId, error.code === 'ER_DUP_ENTRY' ? 409 : 500, Date.now() - startTime, {
+      error: error.message,
+    });
 
     // Handle duplicate email
     if (error.code === 'ER_DUP_ENTRY') {
-      return errorResponse({
-        type: 'https://api.crm2.com/problems/duplicate-email',
-        title: 'Duplicate Email',
-        status: 409,
-        detail: 'A client with this email already exists',
-        instance: request.url,
-      });
+      return standardErrorResponse(
+        ErrorCodes.CONFLICT,
+        'A client with this email already exists',
+        409,
+        undefined,
+        requestId
+      );
     }
 
-    return errorResponse(internalServerErrorProblem(request.url));
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to create client',
+      500,
+      undefined,
+      requestId
+    );
   }
 }

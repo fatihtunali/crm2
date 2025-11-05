@@ -1,5 +1,7 @@
 import { SignJWT, jwtVerify } from 'jose';
 import { NextRequest } from 'next/server';
+import { randomBytes } from 'crypto';
+import { query } from './db';
 
 // Skip validation during build time (when Next.js is collecting page data)
 const isBuildTime = process.env.NEXT_PHASE === 'phase-production-build' ||
@@ -86,4 +88,140 @@ export async function requireAuth(request: NextRequest): Promise<JWTPayload> {
   }
 
   return user;
+}
+
+// ============================================
+// REFRESH TOKEN FUNCTIONS (Phase 2)
+// ============================================
+
+const REFRESH_TOKEN_EXPIRY_DAYS = 30;
+
+interface RefreshTokenRecord {
+  id: number;
+  user_id: number;
+  token: string;
+  expires_at: Date;
+  created_at: Date;
+  revoked_at: Date | null;
+}
+
+/**
+ * Generate a secure refresh token
+ * Uses crypto.randomBytes to create a 64-character hex token
+ * @returns Secure random token string
+ */
+export function generateRefreshToken(): string {
+  return randomBytes(32).toString('hex');
+}
+
+/**
+ * Store refresh token in database
+ * @param userId - User ID to associate with the token
+ * @param token - The refresh token to store
+ * @returns The stored refresh token record ID
+ */
+export async function storeRefreshToken(userId: number, token: string): Promise<number> {
+  const expiresAt = new Date();
+  expiresAt.setDate(expiresAt.getDate() + REFRESH_TOKEN_EXPIRY_DAYS);
+
+  const result: any = await query(
+    'INSERT INTO refresh_tokens (user_id, token, expires_at) VALUES (?, ?, ?)',
+    [userId, token, expiresAt]
+  );
+
+  // For INSERT queries, mysql2 returns a ResultSetHeader with insertId
+  return (result as any).insertId || 0;
+}
+
+/**
+ * Validate refresh token and retrieve user information
+ * Checks if token exists, is not expired, and is not revoked
+ * @param token - The refresh token to validate
+ * @returns User information if token is valid, null otherwise
+ */
+export async function validateRefreshToken(token: string): Promise<{
+  userId: number;
+  email: string;
+  organizationId: number;
+  role: string;
+  tokenId: number;
+} | null> {
+  // Query for the token with user information
+  const result = await query<any>(
+    `SELECT
+      rt.id as token_id,
+      rt.user_id,
+      rt.expires_at,
+      rt.revoked_at,
+      u.email,
+      u.organization_id,
+      u.role,
+      u.status
+    FROM refresh_tokens rt
+    INNER JOIN users u ON rt.user_id = u.id
+    WHERE rt.token = ?`,
+    [token]
+  );
+
+  if (result.length === 0) {
+    return null; // Token not found
+  }
+
+  const record = result[0];
+
+  // Check if token is revoked
+  if (record.revoked_at !== null) {
+    return null; // Token has been revoked
+  }
+
+  // Check if token is expired
+  const expiresAt = new Date(record.expires_at);
+  if (expiresAt < new Date()) {
+    return null; // Token has expired
+  }
+
+  // Check if user is still active
+  if (record.status !== 'active') {
+    return null; // User is not active
+  }
+
+  return {
+    userId: record.user_id,
+    email: record.email,
+    organizationId: record.organization_id,
+    role: record.role,
+    tokenId: record.token_id,
+  };
+}
+
+/**
+ * Revoke a refresh token by marking it as revoked
+ * Used during token rotation or logout
+ * @param token - The refresh token to revoke
+ * @returns True if token was revoked, false if not found
+ */
+export async function revokeRefreshToken(token: string): Promise<boolean> {
+  const result: any = await query(
+    'UPDATE refresh_tokens SET revoked_at = NOW() WHERE token = ? AND revoked_at IS NULL',
+    [token]
+  );
+
+  // For UPDATE queries, mysql2 returns a ResultSetHeader with affectedRows
+  return ((result as any).affectedRows || 0) > 0;
+}
+
+/**
+ * Revoke all refresh tokens for a user
+ * Useful for logout from all devices
+ * @param userId - The user ID whose tokens should be revoked
+ * @returns Number of tokens revoked
+ */
+export async function revokeAllUserTokens(userId: number): Promise<number> {
+  const result: any = await query(
+    'UPDATE refresh_tokens SET revoked_at = NOW() WHERE user_id = ? AND revoked_at IS NULL',
+    [userId]
+  );
+
+  // For UPDATE queries, mysql2 returns a ResultSetHeader with affectedRows
+  return (result as any).affectedRows || 0;
 }

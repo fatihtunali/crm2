@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import bcrypt from 'bcryptjs';
-import { createToken } from '@/lib/jwt';
+import { createToken, generateRefreshToken, storeRefreshToken } from '@/lib/jwt';
+import { auditLog, AuditActions, AuditResources } from '@/middleware/audit';
 
 interface User {
   id: number;
@@ -122,7 +123,22 @@ export async function POST(request: NextRequest) {
       [user.id]
     );
 
-    // Create JWT token
+    // AUDIT: Log successful login
+    await auditLog(
+      user.organization_id,
+      user.id,
+      AuditActions.USER_LOGIN,
+      AuditResources.USER,
+      user.id.toString(),
+      null,
+      {
+        login_method: 'password',
+        email: user.email,
+      },
+      request
+    );
+
+    // Create JWT token (access token)
     const token = await createToken({
       userId: user.id,
       email: user.email,
@@ -130,7 +146,11 @@ export async function POST(request: NextRequest) {
       role: user.role,
     });
 
-    // Create response
+    // PHASE 2: Generate and store refresh token
+    const refreshToken = generateRefreshToken();
+    await storeRefreshToken(user.id, refreshToken);
+
+    // Create response with both access and refresh tokens
     const response = NextResponse.json({
       user: {
         id: user.id,
@@ -140,6 +160,10 @@ export async function POST(request: NextRequest) {
         role: user.role,
         organizationId: user.organization_id,
       },
+      access_token: token,
+      refresh_token: refreshToken,
+      expires_in: 604800, // 7 days in seconds
+      token_type: 'Bearer',
     });
 
     // SECURITY: Set httpOnly cookie with strict sameSite policy

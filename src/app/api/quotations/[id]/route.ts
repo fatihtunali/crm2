@@ -1,12 +1,13 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import type { Money } from '@/types/api';
 import {
-  successResponse,
-  errorResponse,
-  notFoundProblem,
-  internalServerErrorProblem,
+  standardErrorResponse,
+  notFoundErrorResponse,
+  ErrorCodes
 } from '@/lib/response';
+import { getRequestId, logResponse } from '@/middleware/correlation';
+import { requirePermission } from '@/middleware/permissions';
 
 /**
  * Convert a decimal string price to Money type
@@ -29,9 +30,12 @@ function convertToMoney(price: string | null, currency: string = 'USD'): Money |
 
 // GET - Fetch single quotation with days and expenses
 export async function GET(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     const { id } = await params;
 
@@ -42,7 +46,7 @@ export async function GET(
     ) as any[];
 
     if (!quote) {
-      return errorResponse(notFoundProblem('Quote not found', `/api/quotations/${id}`));
+      return notFoundErrorResponse(`Quote ${id} not found`, requestId);
     }
 
     // Get days and expenses in a single query with JOIN (optimized - no N+1)
@@ -111,20 +115,37 @@ export async function GET(
       );
     }
 
-    return successResponse(responseQuote);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(
-      internalServerErrorProblem('Failed to fetch quotation')
+    logResponse(requestId, 200, Date.now() - startTime, {
+      quotation_id: id,
+      days_count: days.length,
+    });
+
+    const response = NextResponse.json(responseQuote);
+    response.headers.set('X-Request-Id', requestId);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to fetch quotation',
+      500,
+      undefined,
+      requestId
     );
   }
 }
 
 // PATCH - Partially update quotation
 export async function PATCH(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     const { id } = await params;
 
@@ -135,7 +156,7 @@ export async function PATCH(
     ) as any[];
 
     if (!existingQuote) {
-      return errorResponse(notFoundProblem('Quote not found', `/api/quotations/${id}`));
+      return notFoundErrorResponse(`Quote ${id} not found`, requestId);
     }
 
     const body = await request.json();
@@ -184,7 +205,14 @@ export async function PATCH(
 
     // If no fields to update, return current quote
     if (updateFields.length === 0) {
-      return successResponse(existingQuote);
+      logResponse(requestId, 200, Date.now() - startTime, {
+        quotation_id: id,
+        no_updates: true,
+      });
+
+      const response = NextResponse.json(existingQuote);
+      response.headers.set('X-Request-Id', requestId);
+      return response;
     }
 
     // Add id to the end of params
@@ -210,11 +238,86 @@ export async function PATCH(
       );
     }
 
-    return successResponse(updatedQuote);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(
-      internalServerErrorProblem('Failed to update quotation')
+    logResponse(requestId, 200, Date.now() - startTime, {
+      quotation_id: id,
+      fields_updated: updateFields.length,
+    });
+
+    const response = NextResponse.json(updatedQuote);
+    response.headers.set('X-Request-Id', requestId);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to update quotation',
+      500,
+      undefined,
+      requestId
+    );
+  }
+}
+
+// DELETE - Delete quotation
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
+  try {
+    const { id } = await params;
+
+    // RBAC: Check if user has delete permission for quotations
+    const authResult = await requirePermission(request, 'quotations', 'delete');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+
+    const { user, tenantId } = authResult;
+
+    // Check if quote exists and belongs to user's organization
+    const [existingQuote] = await query(
+      'SELECT * FROM quotes WHERE id = ? AND organization_id = ?',
+      [id, tenantId]
+    ) as any[];
+
+    if (!existingQuote) {
+      return notFoundErrorResponse(`Quote ${id} not found`, requestId);
+    }
+
+    // Delete the quote (cascading deletes will handle quote_days and quote_expenses)
+    await query('DELETE FROM quotes WHERE id = ? AND organization_id = ?', [
+      id,
+      tenantId,
+    ]);
+
+    logResponse(requestId, 204, Date.now() - startTime, {
+      quotation_id: id,
+      deleted_by: user.userId,
+    });
+
+    return new NextResponse(null, {
+      status: 204,
+      headers: {
+        'X-Request-Id': requestId,
+      },
+    });
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to delete quotation',
+      500,
+      undefined,
+      requestId
     );
   }
 }

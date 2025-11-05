@@ -35,6 +35,7 @@ import {
 import { requireTenant } from '@/middleware/tenancy';
 import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
 import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
+import { auditLog, AuditActions, AuditResources } from '@/middleware/audit';
 
 // GET - Fetch all quotations with standardized pagination
 export async function GET(request: NextRequest) {
@@ -386,7 +387,29 @@ export async function POST(request: NextRequest) {
       [insertId]
     ) as any[];
 
-    // 9. Log response
+    // 9. AUDIT: Log quotation creation
+    await auditLog(
+      parseInt(tenantId),
+      user.userId,
+      AuditActions.QUOTATION_CREATED,
+      AuditResources.QUOTATION,
+      insertId.toString(),
+      {
+        customer_name,
+        customer_email,
+        destination,
+        start_date,
+        end_date,
+      },
+      {
+        quote_number,
+        category: category || 'B2C',
+        status: 'draft',
+      },
+      request
+    );
+
+    // 10. Log response
     logResponse(requestId, 201, Date.now() - startTime, {
       user_id: user.userId,
       tenant_id: tenantId,
@@ -444,6 +467,22 @@ export async function PUT(request: NextRequest) {
       return validationErrorResponse(
         'Invalid request data',
         [{ field: 'id', issue: 'required', message: 'Quote ID is required' }],
+        requestId
+      );
+    }
+
+    // Fetch existing quote for audit trail
+    const [existingQuote] = await query(
+      'SELECT * FROM quotes WHERE id = ? AND organization_id = ?',
+      [id, parseInt(tenantId)]
+    ) as any[];
+
+    if (!existingQuote) {
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        'Quotation not found',
+        404,
+        undefined,
         requestId
       );
     }
@@ -508,6 +547,28 @@ export async function PUT(request: NextRequest) {
       ]
     );
 
+    // AUDIT: Log quotation update with changes
+    const changes: Record<string, any> = {};
+    if (customer_name !== existingQuote.customer_name) changes.customer_name = customer_name;
+    if (customer_email !== existingQuote.customer_email) changes.customer_email = customer_email;
+    if (destination !== existingQuote.destination) changes.destination = destination;
+    if (status !== existingQuote.status) changes.status = status;
+    if (total_price !== existingQuote.total_price) changes.total_price = total_price;
+
+    await auditLog(
+      parseInt(tenantId),
+      user.userId,
+      AuditActions.QUOTATION_UPDATED,
+      AuditResources.QUOTATION,
+      id.toString(),
+      changes,
+      {
+        quote_number: existingQuote.quote_number,
+        fields_updated: Object.keys(changes),
+      },
+      request
+    );
+
     logResponse(requestId, 200, Date.now() - startTime, {
       user_id: user.userId,
       tenant_id: tenantId,
@@ -560,10 +621,45 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
+    // Fetch existing quote for audit trail
+    const [existingQuote] = await query(
+      'SELECT * FROM quotes WHERE id = ? AND organization_id = ?',
+      [id, parseInt(tenantId)]
+    ) as any[];
+
+    if (!existingQuote) {
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        'Quotation not found',
+        404,
+        undefined,
+        requestId
+      );
+    }
+
     // SECURITY: Delete only if belongs to user's organization
     await query(
       'UPDATE quotes SET status = ? WHERE id = ? AND organization_id = ?',
       ['expired', id, parseInt(tenantId)]
+    );
+
+    // AUDIT: Log quotation deletion (soft delete)
+    await auditLog(
+      parseInt(tenantId),
+      user.userId,
+      AuditActions.QUOTATION_DELETED,
+      AuditResources.QUOTATION,
+      id.toString(),
+      {
+        status: 'expired',
+        previous_status: existingQuote.status,
+      },
+      {
+        quote_number: existingQuote.quote_number,
+        customer_name: existingQuote.customer_name,
+        deletion_type: 'soft_delete',
+      },
+      request
     );
 
     logResponse(requestId, 200, Date.now() - startTime, {

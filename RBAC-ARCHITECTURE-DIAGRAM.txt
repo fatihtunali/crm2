@@ -1,0 +1,376 @@
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                    RBAC SYSTEM ARCHITECTURE - PHASE 2                         ║
+╚══════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          REQUEST FLOW                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   Client Request
+        │
+        │  [1] HTTP Request with JWT
+        ▼
+   ┌─────────────────────┐
+   │  API Route Handler  │
+   │ /api/quotations/123 │
+   └─────────┬───────────┘
+             │
+             │  [2] requirePermission(request, 'quotations', 'delete')
+             ▼
+   ┌──────────────────────────────┐
+   │   Permission Middleware      │
+   │ src/middleware/permissions.ts│
+   └──────────┬───────────────────┘
+              │
+              │  [3] requireTenant(request)
+              ▼
+   ┌──────────────────────────────┐
+   │    Tenancy Middleware        │
+   │  src/middleware/tenancy.ts   │
+   └──────────┬───────────────────┘
+              │
+              │  [4] Verify JWT → Extract userId, organizationId
+              ▼
+   ┌──────────────────────────────┐
+   │     JWT Verification         │
+   │      src/lib/jwt.ts          │
+   └──────────┬───────────────────┘
+              │
+              ├─── [5a] Valid → Return {userId, organizationId}
+              └─── [5b] Invalid → Return 401 Unauthorized
+                          │
+              ┌───────────┘
+              │
+              ▼
+   ┌──────────────────────────────┐
+   │   Permission Cache Check     │
+   │   (In-Memory Map)            │
+   └──────────┬───────────────────┘
+              │
+              ├─── [6a] Cache Hit (< 5min) → Use cached permissions
+              │
+              └─── [6b] Cache Miss → Query Database
+                          │
+              ┌───────────┘
+              │
+              ▼
+   ┌──────────────────────────────────────────────────────────┐
+   │                  Database Query                          │
+   │                                                          │
+   │  SELECT r.permissions                                   │
+   │  FROM user_roles ur                                     │
+   │  JOIN roles r ON ur.role_id = r.id                      │
+   │  WHERE ur.user_id = ? AND r.organization_id = ?         │
+   │                                                          │
+   └──────────┬───────────────────────────────────────────────┘
+              │
+              │  [7] Returns: [{permissions: "{...}"}, ...]
+              ▼
+   ┌──────────────────────────────┐
+   │   Parse & Merge Permissions  │
+   │      src/lib/rbac.ts         │
+   └──────────┬───────────────────┘
+              │
+              │  [8] mergePermissions() - OR Logic
+              ▼
+   ┌──────────────────────────────┐
+   │   Store in Cache (5min TTL)  │
+   └──────────┬───────────────────┘
+              │
+              │  [9] Check Permission
+              ▼
+   ┌──────────────────────────────────────────┐
+   │      Permission Check Logic              │
+   │                                          │
+   │  1. Check wildcard: permissions["*"]?   │
+   │  2. Check resource: permissions[resource]│
+   │  3. Check action: resource[action]      │
+   │                                          │
+   └──────────┬───────────────────────────────┘
+              │
+              ├─── [10a] Allowed → Return {user, tenantId, allowed: true}
+              │
+              └─── [10b] Denied → Return 403 Forbidden
+                          │
+              ┌───────────┴──────────┐
+              │                      │
+              ▼                      ▼
+   ┌──────────────────┐    ┌──────────────────┐
+   │  Execute Action  │    │  Return Error    │
+   │  DELETE quote    │    │  {code: "...",   │
+   │  (Business Logic)│    │   message: "..."} │
+   └──────────────────┘    └──────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                          DATABASE SCHEMA                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   ┌──────────────────────┐
+   │      users           │
+   │──────────────────────│
+   │  id (PK)            │◄──────┐
+   │  email               │       │
+   │  organization_id (FK)│       │
+   │  ...                 │       │
+   └──────────────────────┘       │
+                                  │
+                                  │ user_id
+   ┌──────────────────────┐       │
+   │    user_roles        │       │
+   │──────────────────────│       │
+   │  id (PK)            │       │
+   │  user_id (FK)       │───────┘
+   │  role_id (FK)       │───────┐
+   │  assigned_at         │       │
+   └──────────────────────┘       │
+                                  │ role_id
+   ┌──────────────────────┐       │
+   │      roles           │       │
+   │──────────────────────│       │
+   │  id (PK)            │◄──────┘
+   │  organization_id (FK)│
+   │  name                │
+   │  permissions (JSON)  │ ◄── {"quotations": {"read": true, ...}}
+   │  is_system_role      │
+   └──────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                       PERMISSION STRUCTURE                                   │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   ┌────────────────────────────────────────────────────────────┐
+   │  Permissions JSON Format (stored in roles.permissions)     │
+   ├────────────────────────────────────────────────────────────┤
+   │                                                            │
+   │  {                                                         │
+   │    "resource_type": {                                      │
+   │      "action": boolean                                     │
+   │    }                                                       │
+   │  }                                                         │
+   │                                                            │
+   │  Example - Admin Role:                                     │
+   │  {                                                         │
+   │    "quotations": {                                         │
+   │      "read": true,                                         │
+   │      "create": true,                                       │
+   │      "update": true,                                       │
+   │      "delete": true                                        │
+   │    },                                                      │
+   │    "clients": {                                            │
+   │      "read": true,                                         │
+   │      "create": true,                                       │
+   │      "update": true,                                       │
+   │      "delete": true                                        │
+   │    }                                                       │
+   │  }                                                         │
+   │                                                            │
+   │  Example - Super Admin (Wildcard):                         │
+   │  {                                                         │
+   │    "*": {                                                  │
+   │      "read": true,                                         │
+   │      "create": true,                                       │
+   │      "update": true,                                       │
+   │      "delete": true                                        │
+   │    }                                                       │
+   │  }                                                         │
+   └────────────────────────────────────────────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        CACHING STRATEGY                                      │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   In-Memory Cache Structure:
+
+   Map<userId, {permissions, timestamp}>
+
+   ┌─────────┬──────────────────────────────────────┬──────────────┐
+   │ User ID │         Permissions Object           │  Timestamp   │
+   ├─────────┼──────────────────────────────────────┼──────────────┤
+   │   123   │ {quotations: {read: true, ...}, ...} │ 1699123456789│
+   │   456   │ {quotations: {read: true, ...}, ...} │ 1699123457000│
+   │   789   │ {"*": {read: true, ...}}             │ 1699123458000│
+   └─────────┴──────────────────────────────────────┴──────────────┘
+
+   Cache Lifecycle:
+
+   ┌─────────────┐
+   │ Cache Entry │
+   └──────┬──────┘
+          │
+          │  [Created on first request]
+          │  Timestamp: Date.now()
+          │  TTL: 5 minutes (300,000 ms)
+          │
+          ▼
+   ┌──────────────────────┐
+   │  Cache Active        │
+   │  (< 5 minutes old)   │◄─── Fast lookups (~2ms)
+   └──────┬───────────────┘
+          │
+          │  [After 5 minutes]
+          │
+          ▼
+   ┌──────────────────────┐
+   │  Cache Expired       │
+   │  (> 5 minutes old)   │◄─── Automatic cleanup on next access
+   └──────┬───────────────┘
+          │
+          │  [Removed from Map]
+          │
+          ▼
+   ┌──────────────────────┐
+   │  Cache Miss          │◄─── Next request queries DB (~10-20ms)
+   └──────────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    MULTI-ROLE PERMISSION MERGING                             │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   User has 2 roles:
+
+   Role A (Agent):                    Role B (Viewer):
+   ┌─────────────────────┐           ┌─────────────────────┐
+   │ quotations:         │           │ reports:            │
+   │   read: true        │           │   read: true        │
+   │   create: true      │           │                     │
+   │   update: true      │           │ quotations:         │
+   │   delete: false     │           │   read: true        │
+   └─────────────────────┘           └─────────────────────┘
+              │                                  │
+              │                                  │
+              └──────────┬───────────────────────┘
+                         │
+                         │  mergePermissions([roleA, roleB])
+                         │  Uses OR Logic
+                         ▼
+               ┌──────────────────────────┐
+               │  Merged Permissions:     │
+               │                          │
+               │  quotations:             │
+               │    read: true  (A OR B)  │
+               │    create: true  (A)     │
+               │    update: true  (A)     │
+               │    delete: false (A)     │
+               │                          │
+               │  reports:                │
+               │    read: true  (B)       │
+               └──────────────────────────┘
+
+   Result: User gets UNION of all permissions from all roles
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                        FILE STRUCTURE                                        │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   src/
+   ├── lib/
+   │   └── rbac.ts ─────────────────► Core RBAC utilities
+   │       ├── Permission types
+   │       ├── Resource & Action constants
+   │       ├── checkWildcardPermission()
+   │       ├── checkResourcePermission()
+   │       ├── validatePermissionsStructure()
+   │       ├── mergePermissions()
+   │       ├── parsePermissions()
+   │       └── DEFAULT_PERMISSIONS
+   │
+   ├── middleware/
+   │   ├── permissions.ts ─────────► Permission middleware
+   │   │   ├── requirePermission()
+   │   │   ├── requireAnyPermission()
+   │   │   ├── requireAllPermissions()
+   │   │   ├── hasPermission()
+   │   │   ├── getUserPermissions()
+   │   │   ├── clearUserPermissionCache()
+   │   │   ├── clearAllPermissionCache()
+   │   │   └── getPermissionCacheStats()
+   │   │
+   │   ├── permissions.example.ts ─► Usage examples
+   │   └── permissions.test.ts ────► Unit tests
+   │
+   └── app/api/quotations/[id]/
+       └── route.ts ───────────────► Example integration
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                    PERMISSION CHECK DECISION TREE                            │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+                     requirePermission(request, resource, action)
+                                      │
+                                      ▼
+                          ┌───────────────────────┐
+                          │ Is JWT valid?         │
+                          └───────┬───────────────┘
+                                  │
+                        ┌─────────┴─────────┐
+                        │                   │
+                       NO                  YES
+                        │                   │
+                        ▼                   ▼
+                ┌──────────────┐    ┌──────────────────────┐
+                │ Return 401   │    │ Get User Permissions │
+                │ Unauthorized │    │ (from cache or DB)   │
+                └──────────────┘    └──────────┬───────────┘
+                                               │
+                                               ▼
+                                    ┌──────────────────────┐
+                                    │ Has wildcard ("*")   │
+                                    │ permission for       │
+                                    │ this action?         │
+                                    └──────┬───────────────┘
+                                           │
+                                  ┌────────┴────────┐
+                                  │                 │
+                                 YES               NO
+                                  │                 │
+                                  │                 ▼
+                                  │      ┌──────────────────────┐
+                                  │      │ Has specific resource│
+                                  │      │ permission for       │
+                                  │      │ this action?         │
+                                  │      └──────┬───────────────┘
+                                  │             │
+                                  │    ┌────────┴────────┐
+                                  │    │                 │
+                                  │   YES               NO
+                                  │    │                 │
+                                  ▼    ▼                 ▼
+                          ┌──────────────────┐   ┌──────────────┐
+                          │ Return 200 OK    │   │ Return 403   │
+                          │ {user, tenantId, │   │ Forbidden    │
+                          │  allowed: true}  │   └──────────────┘
+                          └──────────────────┘
+
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│                      PERFORMANCE METRICS                                     │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+   ┌─────────────────────────────────────────────────────────────┐
+   │  Request Type          │  Latency  │  Database Queries      │
+   ├────────────────────────┼───────────┼────────────────────────┤
+   │  Cache Hit (< 5min)    │   ~2ms    │  0 queries             │
+   │  Cache Miss (DB query) │  ~10-20ms │  1 query (JOIN)        │
+   │  First-time user       │  ~10-20ms │  1 query (JOIN)        │
+   └─────────────────────────────────────────────────────────────┘
+
+   Memory Usage:
+   - Per cached user: ~500 bytes
+   - 100 users cached: ~50 KB
+   - 1000 users cached: ~500 KB
+
+   Expected Performance:
+   - Cache hit rate: >90% (after warmup)
+   - Avg response time: <5ms (including cache overhead)
+   - DB load reduction: ~95%
+
+
+╔══════════════════════════════════════════════════════════════════════════════╗
+║                         END OF ARCHITECTURE                                   ║
+╚══════════════════════════════════════════════════════════════════════════════╝

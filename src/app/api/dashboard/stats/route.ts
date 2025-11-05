@@ -1,17 +1,27 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import db, { query } from '@/lib/db';
-import { successResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
+import { successResponse, errorResponse, internalServerErrorProblem, standardErrorResponse, ErrorCodes } from '@/lib/response';
 import { requireTenant } from '@/middleware/tenancy';
 import { createMoney } from '@/lib/money';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
 
 export async function GET(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+      return standardErrorResponse(
+        ErrorCodes.AUTHENTICATION_REQUIRED,
+        tenantResult.error.detail || 'Authentication required',
+        tenantResult.error.status,
+        undefined,
+        requestId
+      );
     }
-    const { tenantId } = tenantResult;
+    const { tenantId, user } = tenantResult;
 
     // Get counts from database with tenant filtering
     const [
@@ -41,11 +51,28 @@ export async function GET(request: NextRequest) {
       pendingQuotes: (pendingQuotesCount as any)[0]?.count || 0
     };
 
-    return successResponse(stats);
-  } catch (error) {
+    // Log response
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+    });
+
+    const response = NextResponse.json(stats);
+    response.headers.set('X-Request-Id', requestId);
+    return response;
+  } catch (error: any) {
     console.error('Database error:', error);
-    return errorResponse(
-      internalServerErrorProblem('Failed to fetch dashboard stats', '/api/dashboard/stats')
+
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to fetch dashboard stats',
+      500,
+      undefined,
+      requestId
     );
   }
 }

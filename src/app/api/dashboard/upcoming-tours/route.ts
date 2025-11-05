@@ -1,17 +1,27 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { parseSortParams } from '@/lib/pagination';
-import { successResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
+import { successResponse, errorResponse, internalServerErrorProblem, standardErrorResponse, ErrorCodes } from '@/lib/response';
 import { requireTenant } from '@/middleware/tenancy';
+import { getRequestId, logResponse } from '@/middleware/correlation';
 
 export async function GET(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const tenantResult = await requireTenant(request);
     if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+      return standardErrorResponse(
+        ErrorCodes.AUTHENTICATION_REQUIRED,
+        tenantResult.error.detail || 'Authentication required',
+        tenantResult.error.status,
+        undefined,
+        requestId
+      );
     }
-    const { tenantId } = tenantResult;
+    const { tenantId, user } = tenantResult;
 
     const { searchParams } = new URL(request.url);
 
@@ -44,11 +54,28 @@ export async function GET(request: NextRequest) {
 
     const tours = await query(sql, [parseInt(tenantId), pageSize]);
 
-    return successResponse(tours);
-  } catch (error) {
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      results_count: (tours as any[]).length,
+    });
+
+    const response = NextResponse.json(tours);
+    response.headers.set('X-Request-Id', requestId);
+    return response;
+  } catch (error: any) {
     console.error('Database error:', error);
-    return errorResponse(
-      internalServerErrorProblem('Failed to fetch upcoming tours', '/api/dashboard/upcoming-tours')
+
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to fetch upcoming tours',
+      500,
+      undefined,
+      requestId
     );
   }
 }

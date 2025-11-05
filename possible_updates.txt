@@ -1,0 +1,265 @@
+High-impact gaps (ship these next)
+1) Security, Tenancy, RBAC
+
+Auth & token endpoints missing: /api/auth/login, /api/auth/refresh, /api/auth/logout, /api/auth/me.
+
+Multi-tenancy enforcement: Tenancy must be in JWT claims; every endpoint enforces tenant_id. Add a header X-Tenant-Id only for admin tooling, never for user flows.
+
+RBAC: scopes/roles in tokens; per-route authorization. Add /api/users, /api/roles, /api/invitations.
+
+Audit Log: /api/audit-logs with filters (actor, resource, date_range), because finance + ops = audit trails.
+
+2) Resource hygiene (CRUD contracts)
+
+Every collection should support ?page[size]=…&page[number]=…, ?sort=, and filters (?q=, ?status=active, ?city=, ?date_from/to=).
+
+Idempotency: Require Idempotency-Key on POST/PUT for write operations that can be retried (payments, generate-invoice, generate-itinerary).
+
+Soft delete: You have DELETE→Archive on suppliers; replicate across all “business objects” with archived_at, plus ?include_archived=true.
+
+3) Supplier data model (make rates real)
+
+For each supplier type, add rate plans and policies:
+
+Common: name, provider_id, location, geo, seasons, blackout_dates, cancellation_policy, commission_scheme.
+
+RatePlan: currency, net_rate, gross_rate, includes_tax, valid_from/to, min/max_pax, child_policy, free_sales.
+
+Availability: daily inventory or capacity (rooms, seats, guide availability, vehicle availability). Endpoints:
+
+GET /api/suppliers/{type}/{id}/rate-plans
+
+GET /api/suppliers/{type}/{id}/availability?from=&to=
+
+PUT /api/suppliers/{type}/{id}/availability (capacity adjustments, blocks)
+
+Contracts: /api/contracts linking providers↔rate plans with validity windows and documents.
+
+4) Pricing, currency, taxes
+
+You previously set smart rules (EUR receivable, TRY payable, FX lock on acceptance). Encode them:
+
+Currencies:
+
+GET /api/currencies/rates?date= and POST /api/currencies/rates/sync (admin)
+
+On quotation accept, persist locked_exchange_rate.
+
+Taxes & fees:
+
+Turkey: VAT (KDV) and specific museum fees; model tax_lines with jurisdiction, rate, tax_included.
+
+Endpoint: GET /api/tax-codes (so pricing can calculate net/gross properly).
+
+Pricing Engine:
+
+POST /api/pricing/quote with a request of items (hotel nights, transfers, activities) → returns priced items with fx, taxes, commissions, and margins applied.
+
+Keep cost vs sell breakdown per line for P&L.
+
+5) Quotation lifecycle (state machine)
+
+Add explicit states and actions:
+
+draft → priced → sent → accepted → booked → cancelled
+
+Endpoints:
+
+PUT /api/quotations/{id}/status (already there—define allowed transitions + validation)
+
+POST /api/quotations/{id}/book (creates booking with frozen rates/availability)
+
+POST /api/quotations/{id}/duplicate
+
+POST /api/quotations/{id}/reprice?respect_locked=true|false
+
+Itinerary should be a sub-resource:
+
+GET /api/quotations/{id}/itinerary
+
+PUT /api/quotations/{id}/itinerary (manual edits after AI)
+
+POST /api/quotations/{id}/generate-itinerary (you have—return a job id, not the whole doc inline)
+
+6) Bookings as first-class
+
+Right now, bookings are implied via quotations and invoices. Create:
+
+GET/POST/PUT /api/bookings
+
+GET /api/bookings/{id}
+
+POST /api/bookings/{id}/voucher (PDF generation)
+
+POST /api/bookings/{id}/cancel
+
+Link bookings to supplier confirmations (PNRs, voucher codes, pickup times).
+
+7) Payments (receivable & payable)
+
+Receivable:
+
+POST /api/payments/receivable with gateway fields (PSP ref, method, captured_at)
+
+POST /api/invoices/receivable/{id}/refund
+
+Payable:
+
+POST /api/payments/payable (bank transfer refs, due dates, partials)
+
+Webhooks:
+
+/api/webhooks/payments/{provider} for PSP events (captured, failed, chargeback).
+
+Always validate currency rules (EUR in, TRY out) and tie to the locked FX for P&L.
+
+8) Documents & exports
+
+/api/exports for async CSV/XLSX/PDF exports (quotes, bookings, invoices, P&L).
+
+Each export returns a job id; client polls /api/jobs/{id} or subscribes via webhook.
+
+9) Reporting endpoints: add filters + async
+
+Your report endpoints are rich, but they need:
+
+Required filters: ?date_from, ?date_to, optional ?agent_id, ?market, ?destination, ?currency.
+
+Pagination for list-like reports (quotes, clients).
+
+Async for heavy aggregations:
+
+POST /api/reports/financial/profit-loss:run → job
+
+GET /api/reports/jobs/{id} → status + download link
+
+10) Observability & limits
+
+Health: /api/health, /api/health/deps
+
+Rate limiting headers (X-RateLimit-Remaining)
+
+Request correlation: X-Request-Id echoed back; logged in audit.
+
+Schema & contract improvements (surgical)
+Error model (one shape everywhere)
+{
+  "error": {
+    "code": "VALIDATION_ERROR",
+    "message": "Check-in date must be before check-out date",
+    "details": [{"field": "check_in", "issue": "before_check_out"}],
+    "request_id": "req_123"
+  }
+}
+
+Standard list response (with filters/pagination)
+{
+  "data": [...],
+  "meta": {
+    "page": 2,
+    "size": 25,
+    "total": 483,
+    "filters": {"status":"active","city":"Istanbul"}
+  },
+  "links": {
+    "self": "...?page[number]=2&page[size]=25",
+    "next": "...?page[number]=3&page[size]=25"
+  }
+}
+
+Money & currency
+
+Use minor units and ISO currency:
+
+{ "amount_minor": 123450, "currency": "EUR" }
+
+Quotation (core fields to add)
+
+status, pax_adults/children, check_in/out, destination_codes[]
+
+items[] with supplier_type, supplier_id, rate_plan_id, quantity, unit_cost_minor, unit_price_minor, tax_lines[]
+
+locked_exchange_rate (on accept)
+
+totals: cost_minor, sell_minor, margin_minor, currency_sell, currency_cost="TRY"
+
+Availability (per day)
+{
+  "date": "2025-12-20",
+  "capacity_total": 10,
+  "capacity_reserved": 4,
+  "capacity_available": 6,
+  "restrictions": ["no_pickup_after_18"]
+}
+
+Lifecycle rules (make the invariants explicit)
+
+Accept quotation:
+
+validates all item availability (reserve or hold stock if supported),
+
+freezes locked_exchange_rate,
+
+computes final sell vs cost lines,
+
+creates booking + provisional vouchers,
+
+optionally sets receivable invoice(s) and due dates.
+
+Cancel booking:
+
+applies supplier & agency cancellation policy,
+
+computes refunds/penalties,
+
+updates receivable/payable ledgers.
+
+DevEx & specs
+
+Add OpenAPI Components for all schemas (Money, Address, Availability, RatePlan, TaxLine, QuotationItem, Invoice, Payment).
+
+Define enums: QuotationStatus, BookingStatus, InvoiceStatus, PaymentMethod, SupplierType.
+
+Document securitySchemes (JWT bearer) and required scopes per tag.
+
+Provide example payloads per route.
+
+Generate a typed client SDK (TS) from OAS for your frontends.
+
+Performance & data strategy
+
+Indexing: tenant_id leading indexes on all tables; composite on (tenant_id, status, updated_at).
+
+Denormalize report aggregates into materialized views (daily) to keep /reports/* snappy.
+
+Long jobs: put generate-itinerary, reports:*, exports, invoice:generate behind job queue; return job ids.
+
+Region specifics (Türkiye reality check)
+
+KDV/VAT rules per service type; ensure tax_code and inclusive/exclusive rates are modeled.
+
+Museum/entrance fees are volatile; store effective dates and source reference.
+
+FX from TCMB or your PSP—persist the source and timestamp you locked at acceptance.
+
+E-invoice/e-archive readiness: keep tax_number, address, and e_invoice_alias on providers & clients.
+
+Minimal endpoint adds (high ROI)
+
+Auth/Tenancy/Roles
+/api/auth/*, /api/users, /api/roles, /api/audit-logs
+
+Pricing/FX/Taxes
+/api/pricing/quote, /api/currencies/rates, /api/tax-codes
+
+Availability & Rate plans
+/api/suppliers/{type}/{id}/rate-plans, /availability
+
+Bookings & Vouchers
+/api/bookings, /api/bookings/{id}/voucher, /cancel
+
+Payments & Webhooks
+/api/payments/receivable, /api/payments/payable, /api/webhooks/payments/{psp}
+
+Exports & Jobs
+/api/exports, /api/jobs/{id}

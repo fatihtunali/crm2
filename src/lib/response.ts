@@ -5,7 +5,8 @@
  */
 
 import { NextResponse } from 'next/server';
-import type { Problem } from '@/types/api';
+import type { Problem, StandardErrorResponse } from '@/types/api';
+import { randomUUID } from 'crypto';
 
 /**
  * Create a successful response with data
@@ -134,4 +135,228 @@ export function internalServerErrorProblem(
   instance?: string
 ): Problem {
   return createProblem(500, 'Internal Server Error', detail, instance);
+}
+
+/**
+ * Error code constants for standardized error responses
+ */
+export const ErrorCodes = {
+  // 4xx Client Errors
+  VALIDATION_ERROR: 'VALIDATION_ERROR',
+  AUTHENTICATION_REQUIRED: 'AUTHENTICATION_REQUIRED',
+  AUTHORIZATION_FAILED: 'AUTHORIZATION_FAILED',
+  NOT_FOUND: 'NOT_FOUND',
+  CONFLICT: 'CONFLICT',
+  RATE_LIMIT_EXCEEDED: 'RATE_LIMIT_EXCEEDED',
+  INVALID_REQUEST: 'INVALID_REQUEST',
+  IDEMPOTENCY_CONFLICT: 'IDEMPOTENCY_CONFLICT',
+
+  // 5xx Server Errors
+  INTERNAL_ERROR: 'INTERNAL_ERROR',
+  DATABASE_ERROR: 'DATABASE_ERROR',
+  EXTERNAL_SERVICE_ERROR: 'EXTERNAL_SERVICE_ERROR',
+} as const;
+
+/**
+ * Create a standardized error response
+ *
+ * @param code - Machine-readable error code
+ * @param message - Human-readable error message
+ * @param status - HTTP status code
+ * @param details - Optional array of detailed error information
+ * @param requestId - Optional request correlation ID
+ * @returns NextResponse with standardized error format
+ *
+ * @example
+ * ```ts
+ * standardErrorResponse(
+ *   'VALIDATION_ERROR',
+ *   'Check-in date must be before check-out date',
+ *   400,
+ *   [{ field: 'check_in', issue: 'before_check_out' }],
+ *   'req_abc123'
+ * )
+ * ```
+ */
+export function standardErrorResponse(
+  code: string,
+  message: string,
+  status: number,
+  details?: Array<{ field?: string; issue: string; message?: string }>,
+  requestId?: string
+): NextResponse {
+  const errorResponse: StandardErrorResponse = {
+    error: {
+      code,
+      message,
+      ...(details && details.length > 0 && { details }),
+      ...(requestId && { request_id: requestId }),
+      type: `https://api.crm2.com/problems/${code.toLowerCase().replace(/_/g, '-')}`,
+    },
+  };
+
+  return NextResponse.json(errorResponse, {
+    status,
+    headers: {
+      'Content-Type': 'application/problem+json',
+      ...(requestId && { 'X-Request-Id': requestId }),
+    },
+  });
+}
+
+/**
+ * Create a validation error response
+ *
+ * @param message - Human-readable validation error message
+ * @param errors - Array of field-specific validation errors
+ * @param requestId - Optional request correlation ID
+ * @returns NextResponse with 400 status and validation details
+ *
+ * @example
+ * ```ts
+ * validationErrorResponse(
+ *   'Invalid request data',
+ *   [
+ *     { field: 'email', issue: 'invalid_format', message: 'Invalid email address' },
+ *     { field: 'age', issue: 'out_of_range', message: 'Age must be between 18 and 100' }
+ *   ]
+ * )
+ * ```
+ */
+export function validationErrorResponse(
+  message: string,
+  errors: Array<{ field: string; issue: string; message?: string }>,
+  requestId?: string
+): NextResponse {
+  return standardErrorResponse(
+    ErrorCodes.VALIDATION_ERROR,
+    message,
+    400,
+    errors,
+    requestId
+  );
+}
+
+/**
+ * Create a not found error response
+ *
+ * @param message - Human-readable error message
+ * @param requestId - Optional request correlation ID
+ * @returns NextResponse with 404 status
+ */
+export function notFoundErrorResponse(
+  message: string,
+  requestId?: string
+): NextResponse {
+  return standardErrorResponse(
+    ErrorCodes.NOT_FOUND,
+    message,
+    404,
+    undefined,
+    requestId
+  );
+}
+
+/**
+ * Create an authentication required error response
+ *
+ * @param message - Human-readable error message
+ * @param requestId - Optional request correlation ID
+ * @returns NextResponse with 401 status
+ */
+export function authenticationErrorResponse(
+  message: string = 'Authentication required',
+  requestId?: string
+): NextResponse {
+  return standardErrorResponse(
+    ErrorCodes.AUTHENTICATION_REQUIRED,
+    message,
+    401,
+    undefined,
+    requestId
+  );
+}
+
+/**
+ * Create an authorization failed error response
+ *
+ * @param message - Human-readable error message
+ * @param requestId - Optional request correlation ID
+ * @returns NextResponse with 403 status
+ */
+export function authorizationErrorResponse(
+  message: string = 'You do not have permission to perform this action',
+  requestId?: string
+): NextResponse {
+  return standardErrorResponse(
+    ErrorCodes.AUTHORIZATION_FAILED,
+    message,
+    403,
+    undefined,
+    requestId
+  );
+}
+
+/**
+ * Create a rate limit exceeded error response
+ *
+ * @param message - Human-readable error message
+ * @param resetTime - Optional time when the rate limit resets
+ * @param requestId - Optional request correlation ID
+ * @returns NextResponse with 429 status and rate limit headers
+ */
+export function rateLimitErrorResponse(
+  message: string,
+  resetTime?: number,
+  requestId?: string
+): NextResponse {
+  const response = standardErrorResponse(
+    ErrorCodes.RATE_LIMIT_EXCEEDED,
+    message,
+    429,
+    undefined,
+    requestId
+  );
+
+  if (resetTime) {
+    response.headers.set('X-RateLimit-Reset', resetTime.toString());
+    response.headers.set('Retry-After', Math.ceil((resetTime - Date.now()) / 1000).toString());
+  }
+
+  return response;
+}
+
+/**
+ * Generate a unique request ID
+ * Used for request correlation and tracing
+ *
+ * @returns A unique UUID v4 string
+ */
+export function generateRequestId(): string {
+  return randomUUID();
+}
+
+/**
+ * Add standard headers to a response
+ * Includes request ID and CORS headers if needed
+ *
+ * @param response - NextResponse to add headers to
+ * @param requestId - Request correlation ID
+ * @param additionalHeaders - Optional additional headers to add
+ * @returns Modified NextResponse with added headers
+ */
+export function addStandardHeaders(
+  response: NextResponse,
+  requestId: string,
+  additionalHeaders?: Record<string, string>
+): NextResponse {
+  response.headers.set('X-Request-Id', requestId);
+
+  if (additionalHeaders) {
+    Object.entries(additionalHeaders).forEach(([key, value]) => {
+      response.headers.set(key, value);
+    });
+  }
+
+  return response;
 }

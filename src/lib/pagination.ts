@@ -4,7 +4,7 @@
  * @module lib/pagination
  */
 
-import { PagedResponse } from '@/types/api';
+import { PagedResponse, StandardListResponse } from '@/types/api';
 
 /**
  * Default number of items per page
@@ -237,4 +237,133 @@ export function hasNextPage(page: number, total: number, pageSize: number): bool
  */
 export function hasPreviousPage(page: number): boolean {
   return page > 1;
+}
+
+/**
+ * Parses standardized pagination parameters (page[size] and page[number])
+ *
+ * Supports multiple formats for backward compatibility:
+ * - page[size]=25&page[number]=2 (new standardized format)
+ * - page=2&pageSize=25 (legacy format)
+ * - page=2&page_size=25 (legacy format)
+ *
+ * @param searchParams - URLSearchParams from the request
+ * @returns Validated pagination parameters with calculated offset
+ *
+ * @example
+ * ```ts
+ * // New format
+ * const url = new URL('http://example.com/api/items?page[size]=25&page[number]=2');
+ * const { page, pageSize, offset } = parseStandardPaginationParams(url.searchParams);
+ * // Returns: { page: 2, pageSize: 25, offset: 25 }
+ *
+ * // Legacy format (still supported)
+ * const url2 = new URL('http://example.com/api/items?page=2&pageSize=25');
+ * const { page, pageSize, offset } = parseStandardPaginationParams(url2.searchParams);
+ * // Returns: { page: 2, pageSize: 25, offset: 25 }
+ * ```
+ */
+export function parseStandardPaginationParams(
+  searchParams: URLSearchParams
+): PaginationParams {
+  // Try new format first: page[number] and page[size]
+  const pageNumber = searchParams.get('page[number]');
+  const pageSize = searchParams.get('page[size]');
+
+  // If new format is present, use it
+  if (pageNumber !== null || pageSize !== null) {
+    let page = parseInt(pageNumber || '1', 10);
+    let size = parseInt(pageSize || String(DEFAULT_PAGE_SIZE), 10);
+
+    // Validate page >= 1
+    if (isNaN(page) || page < 1) {
+      page = 1;
+    }
+
+    // Validate and clamp pageSize
+    if (isNaN(size) || size < 1) {
+      size = DEFAULT_PAGE_SIZE;
+    } else if (size > MAX_PAGE_SIZE) {
+      size = MAX_PAGE_SIZE;
+    }
+
+    return {
+      page,
+      pageSize: size,
+      offset: (page - 1) * size,
+    };
+  }
+
+  // Fallback to legacy format
+  return parsePaginationParams(searchParams);
+}
+
+/**
+ * Builds a standardized list response with metadata and hypermedia links
+ *
+ * @template T - The type of data items in the response
+ * @param data - Array of data items for the current page
+ * @param total - Total number of items across all pages
+ * @param page - Current page number (1-indexed)
+ * @param pageSize - Number of items per page
+ * @param baseUrl - Base URL for generating pagination links
+ * @param filters - Optional filters applied to the query
+ * @returns StandardListResponse object with data, metadata, and links
+ *
+ * @example
+ * ```ts
+ * const users = await query('SELECT * FROM users LIMIT ? OFFSET ?', [pageSize, offset]);
+ * const total = await query('SELECT COUNT(*) as count FROM users');
+ * const baseUrl = 'https://api.example.com/api/users';
+ *
+ * return buildStandardListResponse(
+ *   users,
+ *   total[0].count,
+ *   page,
+ *   pageSize,
+ *   baseUrl,
+ *   { status: 'active', city: 'Istanbul' }
+ * );
+ * ```
+ */
+export function buildStandardListResponse<T>(
+  data: T[],
+  total: number,
+  page: number,
+  pageSize: number,
+  baseUrl: string,
+  filters?: Record<string, any>
+): StandardListResponse<T> {
+  const totalPages = calculateTotalPages(total, pageSize);
+
+  // Build filter query string
+  const filterParams = filters
+    ? Object.entries(filters)
+        .map(([key, value]) => `${encodeURIComponent(key)}=${encodeURIComponent(String(value))}`)
+        .join('&')
+    : '';
+  const filterString = filterParams ? `&${filterParams}` : '';
+
+  // Helper to build pagination URL
+  const buildUrl = (pageNum: number): string => {
+    return `${baseUrl}?page[size]=${pageSize}&page[number]=${pageNum}${filterString}`;
+  };
+
+  return {
+    data,
+    meta: {
+      page,
+      size: pageSize,
+      total,
+      total_pages: totalPages,
+      ...(filters && { filters }),
+    },
+    links: {
+      self: buildUrl(page),
+      first: buildUrl(1),
+      prev: page > 1 ? buildUrl(page - 1) : null,
+      next: page < totalPages ? buildUrl(page + 1) : null,
+      last: buildUrl(totalPages || 1),
+    },
+  };
 }

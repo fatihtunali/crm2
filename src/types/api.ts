@@ -29,7 +29,8 @@ export interface Money {
 }
 
 /**
- * Generic paginated response wrapper
+ * Generic paginated response wrapper (LEGACY - use StandardListResponse)
+ * @deprecated Use StandardListResponse for new endpoints
  */
 export interface PagedResponse<T> {
   data: T[];
@@ -37,6 +38,63 @@ export interface PagedResponse<T> {
   page: number;
   limit: number;
   totalPages: number;
+}
+
+/**
+ * Standardized list response following JSON:API conventions
+ * Supports pagination, filtering, and hypermedia links
+ */
+export interface StandardListResponse<T> {
+  /** Array of data items for the current page */
+  data: T[];
+  /** Metadata about the response */
+  meta: {
+    /** Current page number (1-indexed) */
+    page: number;
+    /** Items per page */
+    size: number;
+    /** Total items across all pages */
+    total: number;
+    /** Total number of pages */
+    total_pages: number;
+    /** Applied filters (if any) */
+    filters?: Record<string, any>;
+  };
+  /** Hypermedia links for pagination */
+  links: {
+    /** Link to current page */
+    self: string;
+    /** Link to first page */
+    first: string;
+    /** Link to previous page (null if on first page) */
+    prev: string | null;
+    /** Link to next page (null if on last page) */
+    next: string | null;
+    /** Link to last page */
+    last: string;
+  };
+}
+
+/**
+ * Standardized error response following RFC 7807 with extensions
+ */
+export interface StandardErrorResponse {
+  error: {
+    /** Machine-readable error code (e.g., VALIDATION_ERROR, NOT_FOUND) */
+    code: string;
+    /** Human-readable error message */
+    message: string;
+    /** Additional error details (e.g., validation errors) */
+    details?: Array<{
+      field?: string;
+      issue: string;
+      message?: string;
+    }>;
+    /** Unique request ID for tracing */
+    request_id?: string;
+    /** RFC 7807 type URI */
+    type?: string;
+  };
 }
 
 /**

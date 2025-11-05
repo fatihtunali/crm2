@@ -1,18 +1,18 @@
 import { NextRequest } from 'next/server';
 import { query } from '@/lib/db';
 import { successResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
-import { requireTenant } from '@/middleware/tenancy';
+import { requirePermission } from '@/middleware/permissions';
 import { createMoney } from '@/lib/money';
 
 // GET - Fetch financial summary/dashboard data
 export async function GET(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'finance', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
     // Get receivables summary with tenant filtering
     const receivablesSummary = await query(`

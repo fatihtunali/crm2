@@ -1,9 +1,16 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { requirePermission } from '@/middleware/permissions';
 
 // POST - Create a new expense
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
+    const authResult = await requirePermission(request, 'quotations', 'create');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user, tenantId } = authResult;
+
     const body = await request.json();
     const {
       quote_day_id,
@@ -50,8 +57,14 @@ export async function POST(request: Request) {
 }
 
 // PUT - Update an expense
-export async function PUT(request: Request) {
+export async function PUT(request: NextRequest) {
   try {
+    const authResult = await requirePermission(request, 'quotations', 'update');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user, tenantId } = authResult;
+
     const body = await request.json();
     const {
       id,
@@ -98,8 +111,14 @@ export async function PUT(request: Request) {
 }
 
 // DELETE - Delete an expense
-export async function DELETE(request: Request) {
+export async function DELETE(request: NextRequest) {
   try {
+    const authResult = await requirePermission(request, 'quotations', 'delete');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user, tenantId } = authResult;
+
     const { id } = await request.json();
 
     await query('DELETE FROM quote_expenses WHERE id = ?', [id]);

@@ -2,17 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { parsePaginationParams, parseSortParams, buildPagedResponse } from '@/lib/pagination';
 import { successResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
-import { requireTenant } from '@/middleware/tenancy';
+import { requirePermission } from '@/middleware/permissions';
 
 // GET - Fetch all entrance fees with their pricing
 export async function GET(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'providers', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
     const { searchParams } = new URL(request.url);
     const { page, pageSize, offset } = parsePaginationParams(searchParams);
@@ -118,11 +118,11 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'providers', 'create');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
     // Check for idempotency key
     const idempotencyKey = request.headers.get('Idempotency-Key');
@@ -196,11 +196,11 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'providers', 'update');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
     const body = await request.json();
     const { id } = body;

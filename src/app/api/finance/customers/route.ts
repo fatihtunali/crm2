@@ -3,18 +3,18 @@ import { query } from '@/lib/db';
 import { parsePaginationParams, parseSortParams, buildPagedResponse } from '@/lib/pagination';
 import { buildWhereClause, buildSearchClause, combineWhereAndSearch } from '@/lib/query-builder';
 import { successResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
-import { requireTenant } from '@/middleware/tenancy';
+import { requirePermission } from '@/middleware/permissions';
 import { createMoney } from '@/lib/money';
 
 // GET - Fetch aggregated customer financial data
 export async function GET(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'finance', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
     const { searchParams } = new URL(request.url);
 

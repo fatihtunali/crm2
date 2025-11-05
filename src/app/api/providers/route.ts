@@ -3,18 +3,18 @@ import { query } from '@/lib/db';
 import { parsePaginationParams, parseSortParams, buildPagedResponse } from '@/lib/pagination';
 import { buildWhereClause, buildSearchClause, combineWhereAndSearch } from '@/lib/query-builder';
 import { successResponse, createdResponse, errorResponse, internalServerErrorProblem, badRequestProblem } from '@/lib/response';
-import { requireTenant } from '@/middleware/tenancy';
+import { requirePermission } from '@/middleware/permissions';
 import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
 
 // GET - Fetch all providers with pagination, search, and filters
 export async function GET(request: NextRequest) {
   try {
     // Enforce tenant scoping
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'providers', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
     const { searchParams } = new URL(request.url);
 
@@ -137,11 +137,11 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     // Enforce tenant scoping
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'providers', 'create');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
     // Check idempotency key
     const idempotencyKey = request.headers.get('Idempotency-Key');

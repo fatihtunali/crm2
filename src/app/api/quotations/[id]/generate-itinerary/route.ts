@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query, transaction } from '@/lib/db';
 import { generateItineraryWithAI } from '@/lib/ai';
-import { requireTenant } from '@/middleware/tenancy';
+import { requirePermission } from '@/middleware/permissions';
 import { errorResponse, successResponse, internalServerErrorProblem } from '@/lib/response';
 
 // Rate limiting for AI calls (in-memory, will be moved to MySQL later)
@@ -36,11 +36,11 @@ export async function POST(
 ) {
   try {
     // SECURITY: Require authentication
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'quotations', 'create');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId, user } = tenantResult;
+    const { tenantId, user } = authResult;
 
     // SECURITY: Rate limiting for AI calls (expensive operation)
     const rateLimitCheck = checkAIRateLimit(user.userId);

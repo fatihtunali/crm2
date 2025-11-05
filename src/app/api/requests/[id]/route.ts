@@ -1,7 +1,7 @@
 import { NextRequest } from 'next/server';
 import { query } from '@/lib/db';
 import { successResponse, errorResponse, noContentResponse, notFoundProblem, internalServerErrorProblem } from '@/lib/response';
-import { requireTenant } from '@/middleware/tenancy';
+import { requirePermission } from '@/middleware/permissions';
 import { createMoney } from '@/lib/money';
 
 // GET - Fetch single request
@@ -12,11 +12,11 @@ export async function GET(
   const { id } = await params;
   try {
     // Require tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'requests', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
     const [row] = await query(
       `SELECT * FROM customer_itineraries WHERE id = ? AND organization_id = ?`,
@@ -53,11 +53,11 @@ export async function PATCH(
   const { id } = await params;
   try {
     // Require tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'requests', 'update');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
     // Check if request exists and belongs to tenant
     const [existing] = await query(
@@ -195,11 +195,11 @@ export async function DELETE(
   const { id } = await params;
   try {
     // Require tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'requests', 'delete');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
     // Check if request exists and belongs to tenant
     const [existing] = await query(

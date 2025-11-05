@@ -1,12 +1,19 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query, transaction } from '@/lib/db';
+import { requirePermission } from '@/middleware/permissions';
 
 // GET - Fetch all days for a quote
 export async function GET(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const authResult = await requirePermission(request, 'quotations', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user, tenantId } = authResult;
+
     const { id } = await params;
 
     const days = await query(
@@ -23,10 +30,16 @@ export async function GET(
 
 // POST - Create a new day
 export async function POST(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const authResult = await requirePermission(request, 'quotations', 'create');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user, tenantId } = authResult;
+
     const { id } = await params;
     const body = await request.json();
     const { day_number, date } = body;
@@ -45,8 +58,14 @@ export async function POST(
 
 // DELETE - Delete a day and its expenses
 // Uses transaction to ensure both expenses and day are deleted atomically
-export async function DELETE(request: Request) {
+export async function DELETE(request: NextRequest) {
   try {
+    const authResult = await requirePermission(request, 'quotations', 'delete');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user, tenantId } = authResult;
+
     const { dayId } = await request.json();
 
     // Delete day and expenses in a transaction

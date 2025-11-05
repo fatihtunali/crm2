@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { parsePaginationParams, buildPagedResponse } from '@/lib/pagination';
 import { createdResponse, errorResponse, badRequestProblem, internalServerErrorProblem, successResponse } from '@/lib/response';
-import { requireTenant } from '@/middleware/tenancy';
+import { requirePermission } from '@/middleware/permissions';
 import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
 import { handleError } from '@/middleware/errorHandler';
 import type { PagedResponse } from '@/types/api';
@@ -49,11 +49,11 @@ interface Vehicle {
 export async function GET(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'providers', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
     const { searchParams } = new URL(request.url);
 
@@ -210,11 +210,11 @@ export async function GET(request: NextRequest) {
 export async function POST(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'providers', 'create');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
     // Check idempotency key
     const idempotencyKey = request.headers.get('Idempotency-Key');
@@ -300,11 +300,11 @@ export async function POST(request: NextRequest) {
 export async function PUT(request: NextRequest) {
   try {
     // Require tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'providers', 'update');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
     const body = await request.json();
     const { id } = body;

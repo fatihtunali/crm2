@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { parseSortParams } from '@/lib/pagination';
 import { successResponse, errorResponse, internalServerErrorProblem, standardErrorResponse, ErrorCodes } from '@/lib/response';
-import { requireTenant } from '@/middleware/tenancy';
+import { requirePermission } from '@/middleware/permissions';
 import { getRequestId, logResponse } from '@/middleware/correlation';
 
 export async function GET(request: NextRequest) {
@@ -11,17 +11,11 @@ export async function GET(request: NextRequest) {
 
   try {
     // Require tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return standardErrorResponse(
-        ErrorCodes.AUTHENTICATION_REQUIRED,
-        tenantResult.error.detail || 'Authentication required',
-        tenantResult.error.status,
-        undefined,
-        requestId
-      );
+    const authResult = await requirePermission(request, 'dashboard', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId, user } = tenantResult;
+    const { tenantId, user } = authResult;
 
     const { searchParams } = new URL(request.url);
 

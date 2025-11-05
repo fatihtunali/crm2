@@ -18,6 +18,7 @@ import {
   getBookingsCount,
 } from '@/lib/booking-lifecycle';
 import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
+import { requirePermission } from '@/middleware/permissions';
 import type { CreateBookingRequest, Booking } from '@/types/api';
 
 /**
@@ -26,6 +27,12 @@ import type { CreateBookingRequest, Booking } from '@/types/api';
  */
 export async function GET(request: NextRequest) {
   try {
+    const authResult = await requirePermission(request, 'bookings', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user, tenantId } = authResult;
+
     const { searchParams } = new URL(request.url);
     const { page, pageSize, offset } = parsePaginationParams(searchParams);
 
@@ -61,6 +68,12 @@ export async function GET(request: NextRequest) {
  */
 export async function POST(request: NextRequest) {
   try {
+    const authResult = await requirePermission(request, 'bookings', 'create');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user, tenantId } = authResult;
+
     // Check for idempotency key
     const idempotencyKey = request.headers.get('Idempotency-Key');
 

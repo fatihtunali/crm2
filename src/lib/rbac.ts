@@ -35,6 +35,13 @@ export const RESOURCES = {
   BOOKINGS: 'bookings',
   ROLES: 'roles',
   AUDIT_LOGS: 'audit_logs',
+  AGENTS: 'agents',
+  PROVIDERS: 'providers',
+  REQUESTS: 'requests',
+  FINANCE: 'finance',
+  DASHBOARD: 'dashboard',
+  ADMIN: 'admin',
+  PRICING: 'pricing',
   WILDCRAD: '*', // Super admin wildcard
 } as const;
 

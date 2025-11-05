@@ -7,7 +7,7 @@ import {
   badRequestProblem,
   internalServerErrorProblem,
 } from '@/lib/response';
-import { requireTenant } from '@/middleware/tenancy';
+import { requirePermission } from '@/middleware/permissions';
 import { createMoney } from '@/lib/money';
 
 // GET - Fetch a single receivable invoice with Money types
@@ -18,11 +18,11 @@ export async function GET(
   const { id } = await params;
   try {
     // Require tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'invoices', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
     const invoiceId = id;
 
@@ -75,11 +75,11 @@ export async function PATCH(
   const { id } = await params;
   try {
     // Require tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'invoices', 'update');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
     const invoiceId = id;
 

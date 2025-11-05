@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { successResponse, noContentResponse, errorResponse, notFoundProblem, internalServerErrorProblem, badRequestProblem } from '@/lib/response';
-import { requireTenant } from '@/middleware/tenancy';
+import { requirePermission } from '@/middleware/permissions';
 
 interface RouteContext {
   params: Promise<{
@@ -17,11 +17,11 @@ export async function GET(
   try {
     const { id } = await context.params;
     // Enforce tenant scoping
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'providers', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
 
     // Validate ID
@@ -74,11 +74,11 @@ export async function PATCH(
   try {
     const { id } = await context.params;
     // Enforce tenant scoping
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'providers', 'update');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
 
     // Validate ID
@@ -165,11 +165,11 @@ export async function DELETE(
   try {
     const { id } = await context.params;
     // Enforce tenant scoping
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'providers', 'delete');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantResult;
+    const { tenantId } = authResult;
 
 
     // Validate ID

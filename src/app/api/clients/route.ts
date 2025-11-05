@@ -3,7 +3,7 @@ import { query } from '@/lib/db';
 import { parseStandardPaginationParams, buildStandardListResponse, parseSortParams } from '@/lib/pagination';
 import { buildWhereClause, buildSearchClause, combineWhereAndSearch } from '@/lib/query-builder';
 import { standardErrorResponse, validationErrorResponse, ErrorCodes } from '@/lib/response';
-import { requireTenant } from '@/middleware/tenancy';
+import { requirePermission } from '@/middleware/permissions';
 import { getRequestId, logResponse } from '@/middleware/correlation';
 
 /**
@@ -16,17 +16,11 @@ export async function GET(request: NextRequest) {
 
   try {
     // Require tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return standardErrorResponse(
-        ErrorCodes.AUTHENTICATION_REQUIRED,
-        tenantResult.error.detail || 'Authentication required',
-        tenantResult.error.status,
-        undefined,
-        requestId
-      );
+    const authResult = await requirePermission(request, 'clients', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId, user } = tenantResult;
+    const { tenantId, user } = authResult;
 
     const { searchParams } = new URL(request.url);
 
@@ -179,17 +173,11 @@ export async function POST(request: NextRequest) {
 
   try {
     // Require tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return standardErrorResponse(
-        ErrorCodes.AUTHENTICATION_REQUIRED,
-        tenantResult.error.detail || 'Authentication required',
-        tenantResult.error.status,
-        undefined,
-        requestId
-      );
+    const authResult = await requirePermission(request, 'clients', 'create');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId, user } = tenantResult;
+    const { tenantId, user } = authResult;
 
     const body = await request.json();
 

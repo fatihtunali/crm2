@@ -1,7 +1,7 @@
 import { query } from '@/lib/db';
 import { parsePaginationParams, parseSortParams, buildPagedResponse } from '@/lib/pagination';
 import { successResponse, errorResponse, badRequestProblem, internalServerErrorProblem } from '@/lib/response';
-import { requireTenant } from '@/middleware/tenancy';
+import { requirePermission } from '@/middleware/permissions';
 
 /**
  * Supplier type discriminator for federated search results
@@ -33,11 +33,11 @@ interface SupplierSearchResult {
 export async function GET(request: Request) {
   try {
     // Validate tenant
-    const tenantCheck = await requireTenant(request as any);
-    if ('error' in tenantCheck) {
-      return errorResponse(tenantCheck.error);
+    const authResult = await requirePermission(request as any, 'providers', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId } = tenantCheck;
+    const { tenantId, user } = authResult;
 
     const { searchParams } = new URL(request.url);
 

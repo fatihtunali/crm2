@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { requireTenant } from '@/middleware/tenancy';
+import { requirePermission } from '@/middleware/permissions';
 import { successResponse, errorResponse, internalServerErrorProblem, badRequestProblem } from '@/lib/response';
 import bcrypt from 'bcryptjs';
 
@@ -11,11 +11,11 @@ export async function GET(
 ) {
   try {
     const { id } = await params;
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'users', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId, user } = tenantResult;
+    const { tenantId, user } = authResult;
 
     // Only org_admin and super_admin can view users
     if (user.role !== 'org_admin' && user.role !== 'super_admin') {
@@ -59,11 +59,11 @@ export async function PATCH(
 ) {
   try {
     const { id } = await params;
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'users', 'update');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId, user } = tenantResult;
+    const { tenantId, user } = authResult;
 
     // Only org_admin and super_admin can update users
     if (user.role !== 'org_admin' && user.role !== 'super_admin') {
@@ -172,11 +172,11 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'users', 'delete');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId, user } = tenantResult;
+    const { tenantId, user } = authResult;
 
     // Only org_admin and super_admin can delete users
     if (user.role !== 'org_admin' && user.role !== 'super_admin') {

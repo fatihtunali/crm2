@@ -32,7 +32,7 @@ import {
   ErrorCodes,
   addStandardHeaders,
 } from '@/lib/response';
-import { requireTenant } from '@/middleware/tenancy';
+import { requirePermission } from '@/middleware/permissions';
 import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
 import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import { auditLog, AuditActions, AuditResources } from '@/middleware/audit';
@@ -44,17 +44,11 @@ export async function GET(request: NextRequest) {
 
   try {
     // 1. Authenticate and get tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return standardErrorResponse(
-        ErrorCodes.AUTHENTICATION_REQUIRED,
-        tenantResult.error.detail || 'Authentication required',
-        tenantResult.error.status,
-        undefined,
-        requestId
-      );
+    const authResult = await requirePermission(request, 'quotations', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId, user } = tenantResult;
+    const { tenantId, user } = authResult;
 
     // 2. Rate limiting (100 requests per hour per user)
     const rateLimit = globalRateLimitTracker.trackRequest(
@@ -200,17 +194,11 @@ export async function POST(request: NextRequest) {
 
   try {
     // 1. Authenticate and get tenant
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return standardErrorResponse(
-        ErrorCodes.AUTHENTICATION_REQUIRED,
-        tenantResult.error.detail || 'Authentication required',
-        tenantResult.error.status,
-        undefined,
-        requestId
-      );
+    const authResult = await requirePermission(request, 'quotations', 'create');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId, user } = tenantResult;
+    const { tenantId, user } = authResult;
 
     // 2. Rate limiting (50 creates per hour per user)
     const rateLimit = globalRateLimitTracker.trackRequest(
@@ -448,17 +436,11 @@ export async function PUT(request: NextRequest) {
   const startTime = Date.now();
 
   try {
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return standardErrorResponse(
-        ErrorCodes.AUTHENTICATION_REQUIRED,
-        tenantResult.error.detail || 'Authentication required',
-        tenantResult.error.status,
-        undefined,
-        requestId
-      );
+    const authResult = await requirePermission(request, 'quotations', 'update');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId, user } = tenantResult;
+    const { tenantId, user } = authResult;
 
     const body = await request.json();
     const { id, ...updateFields } = body;
@@ -599,17 +581,11 @@ export async function DELETE(request: NextRequest) {
   const startTime = Date.now();
 
   try {
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return standardErrorResponse(
-        ErrorCodes.AUTHENTICATION_REQUIRED,
-        tenantResult.error.detail || 'Authentication required',
-        tenantResult.error.status,
-        undefined,
-        requestId
-      );
+    const authResult = await requirePermission(request, 'quotations', 'delete');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId, user } = tenantResult;
+    const { tenantId, user } = authResult;
 
     const { id } = await request.json();
 

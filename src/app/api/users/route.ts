@@ -1,17 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { requireTenant } from '@/middleware/tenancy';
+import { requirePermission } from '@/middleware/permissions';
 import { successResponse, errorResponse, internalServerErrorProblem, badRequestProblem } from '@/lib/response';
 import bcrypt from 'bcryptjs';
 
 // GET - List all users in the organization
 export async function GET(request: NextRequest) {
   try {
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'users', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId, user } = tenantResult;
+    const { tenantId, user } = authResult;
 
     // Only org_admin and super_admin can view users
     if (user.role !== 'org_admin' && user.role !== 'super_admin') {
@@ -42,11 +42,11 @@ export async function GET(request: NextRequest) {
 // POST - Create new user
 export async function POST(request: NextRequest) {
   try {
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'users', 'create');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId, user } = tenantResult;
+    const { tenantId, user } = authResult;
 
     // Only org_admin and super_admin can create users
     if (user.role !== 'org_admin' && user.role !== 'super_admin') {

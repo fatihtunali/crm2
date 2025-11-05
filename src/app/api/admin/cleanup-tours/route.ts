@@ -1,16 +1,16 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { requireTenant } from '@/middleware/tenancy';
+import { requirePermission } from '@/middleware/permissions';
 import { errorResponse, successResponse, internalServerErrorProblem } from '@/lib/response';
 
 export async function POST(request: NextRequest) {
   try {
     // SECURITY: Require authentication and get tenant context
-    const tenantResult = await requireTenant(request);
-    if ('error' in tenantResult) {
-      return errorResponse(tenantResult.error);
+    const authResult = await requirePermission(request, 'admin', 'create');
+    if ('error' in authResult) {
+      return authResult.error;
     }
-    const { tenantId, user } = tenantResult;
+    const { tenantId, user } = authResult;
 
     // SECURITY: Only super_admin can cleanup tours
     if (user.role !== 'super_admin') {

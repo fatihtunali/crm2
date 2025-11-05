@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { createBookingFromQuotation } from '@/lib/booking-lifecycle';
 import {
@@ -8,13 +8,20 @@ import {
   notFoundProblem,
   internalServerErrorProblem,
 } from '@/lib/response';
+import { requirePermission } from '@/middleware/permissions';
 
 // PUT - Update quote status
 export async function PUT(
-  request: Request,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
+    const authResult = await requirePermission(request, 'quotations', 'update');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user, tenantId } = authResult;
+
     const { id } = await params;
     const body = await request.json();
     const { status } = body;

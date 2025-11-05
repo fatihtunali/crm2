@@ -37,6 +37,12 @@ export async function GET(
   const startTime = Date.now();
 
   try {
+    const authResult = await requirePermission(request, 'quotations', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user, tenantId } = authResult;
+
     const { id } = await params;
 
     // Get quote
@@ -147,6 +153,12 @@ export async function PATCH(
   const startTime = Date.now();
 
   try {
+    const authResult = await requirePermission(request, 'quotations', 'update');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user, tenantId } = authResult;
+
     const { id } = await params;
 
     // Check if quote exists

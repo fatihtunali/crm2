@@ -15,6 +15,7 @@ import {
   getBookingById,
   updateBookingStatus,
 } from '@/lib/booking-lifecycle';
+import { requirePermission } from '@/middleware/permissions';
 import type { UpdateBookingRequest } from '@/types/api';
 
 interface RouteParams {
@@ -33,6 +34,12 @@ export async function GET(
 ) {
   const { id } = await params;
   try {
+    const authResult = await requirePermission(request, 'bookings', 'read');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user, tenantId } = authResult;
+
     const bookingId = parseInt(id, 10);
 
     // Validate ID
@@ -78,6 +85,12 @@ export async function PATCH(
 ) {
   const { id } = await params;
   try {
+    const authResult = await requirePermission(request, 'bookings', 'update');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user, tenantId } = authResult;
+
     const bookingId = parseInt(id, 10);
 
     // Validate ID

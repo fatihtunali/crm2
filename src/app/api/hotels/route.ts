@@ -1,89 +1,112 @@
-import { NextRequest } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { parsePaginationParams, parseSortParams, buildPagedResponse } from '@/lib/pagination';
-import { successResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
+import {
+  parseStandardPaginationParams,
+  parseSortParams,
+  buildStandardListResponse,
+} from '@/lib/pagination';
+import {
+  buildWhereClause,
+  buildSearchClause,
+  buildQuery,
+} from '@/lib/query-builder';
+import {
+  standardErrorResponse,
+  validationErrorResponse,
+  ErrorCodes,
+  addStandardHeaders,
+} from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
+import { auditLog, AuditActions, AuditResources } from '@/middleware/audit';
 
 // GET - Fetch all hotels with their pricing (with proper table qualifiers)
 export async function GET(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
-    // Require tenant
+    // 1. Authenticate and get tenant
     const authResult = await requirePermission(request, 'providers', 'read');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
+    // 2. Rate limiting (100 requests per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}`,
+      100,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
+
+    // 3. Parse pagination (supports both old and new format)
     const { searchParams } = new URL(request.url);
+    const { page, pageSize, offset } = parseStandardPaginationParams(searchParams);
 
-    // Parse pagination parameters
-    const { page, pageSize, offset } = parsePaginationParams(searchParams);
-
-    // Define allowed columns for ORDER BY (whitelist for security)
-    const allowedOrderColumns = [
-      'id',
-      'hotel_name',
-      'city',
-      'region',
-      'star_rating',
-      'hotel_category',
-      'created_at',
-      'updated_at',
-      'status'
-    ];
-
-    // Parse sort parameters with whitelist validation (default: -created_at)
-    const sortParam = searchParams.get('sort') || '-created_at';
-    const orderBy = parseSortParams(sortParam, allowedOrderColumns);
-
-    // Build WHERE conditions manually with table qualifiers
-    const whereConditions: string[] = [];
-    const params: any[] = [];
-
-    // Add tenancy filter
-    whereConditions.push('h.organization_id = ?');
-    params.push(parseInt(tenantId));
-
-    // Status filter
+    // 4. Extract filters
     const statusFilter = searchParams.get('status');
-    if (statusFilter && statusFilter !== 'all') {
-      whereConditions.push('h.status = ?');
-      params.push(statusFilter);
-    }
-
-    // Star rating filter
     const starRatingFilter = searchParams.get('star_rating');
-    if (starRatingFilter && starRatingFilter !== 'all') {
-      whereConditions.push('h.star_rating = ?');
-      params.push(parseInt(starRatingFilter));
-    }
-
-    // Hotel category filter
     const hotelCategoryFilter = searchParams.get('hotel_category');
-    if (hotelCategoryFilter && hotelCategoryFilter !== 'all') {
-      whereConditions.push('h.hotel_category = ?');
-      params.push(hotelCategoryFilter);
-    }
-
-    // City filter
     const cityFilter = searchParams.get('city');
+
+    const filters: Record<string, any> = {
+      // SECURITY: Always filter by organization
+      'h.organization_id': parseInt(tenantId)
+    };
+
+    if (statusFilter && statusFilter !== 'all') {
+      filters['h.status'] = statusFilter;
+    }
+
+    if (starRatingFilter && starRatingFilter !== 'all') {
+      filters['h.star_rating'] = parseInt(starRatingFilter);
+    }
+
+    if (hotelCategoryFilter && hotelCategoryFilter !== 'all') {
+      filters['h.hotel_category'] = hotelCategoryFilter;
+    }
+
     if (cityFilter && cityFilter !== 'all') {
-      whereConditions.push('h.city = ?');
-      params.push(cityFilter);
+      filters['h.city'] = cityFilter;
     }
 
-    // Build search clause (search in hotel_name, city, region)
-    const searchTerm = searchParams.get('search');
-    if (searchTerm && searchTerm.trim() !== '') {
-      whereConditions.push('(h.hotel_name LIKE ? OR h.city LIKE ? OR h.region LIKE ?)');
-      const searchValue = `%${searchTerm}%`;
-      params.push(searchValue, searchValue, searchValue);
-    }
+    // 5. Parse search
+    const searchTerm = searchParams.get('search') || searchParams.get('q') || '';
 
-    const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : '';
+    // 6. Parse sort (default: -created_at)
+    const sortParam = searchParams.get('sort') || '-created_at';
+    // SECURITY: Whitelist allowed columns
+    const ALLOWED_COLUMNS = [
+      'id', 'hotel_name', 'city', 'region', 'star_rating', 'hotel_category',
+      'created_at', 'updated_at', 'status'
+    ];
+    const orderBy = parseSortParams(sortParam, ALLOWED_COLUMNS) || 'h.created_at DESC';
 
-    // Build main query
-    let sql = `
+    // 7. Build WHERE clause
+    const whereClause = buildWhereClause(filters);
+
+    // 8. Build search clause
+    const searchClause = buildSearchClause(searchTerm, [
+      'h.hotel_name',
+      'h.city',
+      'h.region',
+    ]);
+
+    // 9. Build main query
+    const baseQuery = `
       SELECT
         h.*,
         hp.id as pricing_id,
@@ -106,68 +129,141 @@ export async function GET(request: NextRequest) {
         AND CURDATE() BETWEEN hp.start_date AND hp.end_date
     `;
 
-    // Add WHERE clause
-    if (whereClause) {
-      sql += ` WHERE ${whereClause}`;
-    }
+    const { sql, params } = buildQuery(baseQuery, {
+      where: whereClause,
+      search: searchClause,
+      orderBy,
+      limit: pageSize,
+      offset,
+    });
 
-    // Add ORDER BY clause
-    if (orderBy) {
-      sql += ` ORDER BY h.${orderBy}`;
-    } else {
-      sql += ` ORDER BY h.created_at DESC`;
-    }
+    // 10. Execute query
+    const rows = await query(sql, params);
 
-    // Add pagination
-    sql += ` LIMIT ? OFFSET ?`;
-    params.push(pageSize, offset);
+    // 11. Get total count
+    const countBaseQuery = 'SELECT COUNT(*) as count FROM hotels h';
+    const { sql: countSql, params: countParams } = buildQuery(countBaseQuery, {
+      where: whereClause,
+      search: searchClause,
+    });
 
-    // Build count query
-    let countSql = `SELECT COUNT(*) as total FROM hotels h`;
-    if (whereClause) {
-      countSql += ` WHERE ${whereClause}`;
-    }
+    const countResult = await query(countSql, countParams) as any[];
+    const total = countResult[0]?.count || 0;
 
-    // Build count params (without pagination params)
-    const countParams = params.slice(0, -2);
+    // 12. Build base URL for hypermedia links
+    const url = new URL(request.url);
+    const baseUrl = `${url.protocol}//${url.host}${url.pathname}`;
 
-    // Execute queries
-    const [rows, countResult] = await Promise.all([
-      query(sql, params),
-      query(countSql, countParams)
-    ]);
+    // 13. Extract applied filters for metadata
+    const appliedFilters: Record<string, any> = {};
+    if (statusFilter) appliedFilters.status = statusFilter;
+    if (starRatingFilter) appliedFilters.star_rating = starRatingFilter;
+    if (hotelCategoryFilter) appliedFilters.hotel_category = hotelCategoryFilter;
+    if (cityFilter) appliedFilters.city = cityFilter;
+    if (searchTerm) appliedFilters.search = searchTerm;
 
-    const total = (countResult as any)[0].total;
+    // 14. Build standardized response with hypermedia
+    const responseData = buildStandardListResponse(
+      rows,
+      total,
+      page,
+      pageSize,
+      baseUrl,
+      appliedFilters
+    );
 
-    // Build paged response
-    const pagedResponse = buildPagedResponse(rows, total, page, pageSize);
+    // 15. Create response with headers
+    const response = NextResponse.json(responseData);
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
 
-    return successResponse(pagedResponse);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(
-      internalServerErrorProblem('Failed to fetch hotels', '/api/hotels')
+    // 16. Log response
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      results_count: (rows as any[]).length,
+      total_results: total,
+      page,
+      page_size: pageSize,
+    });
+
+    return response;
+  } catch (error: any) {
+    // Log error
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'An unexpected error occurred while fetching hotels',
+      500,
+      undefined,
+      requestId
     );
   }
 }
 
 // POST - Create new hotel
 export async function POST(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
-    // Require tenant
+    // 1. Authenticate and get tenant
     const authResult = await requirePermission(request, 'providers', 'create');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
-    // Check for idempotency key
+    // 2. Rate limiting (50 creates per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_create`,
+      50,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Creation rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
+
+    // 3. Check for Idempotency-Key header
     const idempotencyKey = request.headers.get('Idempotency-Key');
+
+    // If idempotency key provided, check if already processed
     if (idempotencyKey) {
-      const { checkIdempotencyKey, storeIdempotencyKey } = await import('@/middleware/idempotency');
-      const cachedResponse = await checkIdempotencyKey(request, idempotencyKey);
-      if (cachedResponse) {
-        return cachedResponse;
+      const existing = await query(
+        'SELECT * FROM hotels WHERE idempotency_key = ? AND organization_id = ?',
+        [idempotencyKey, parseInt(tenantId)]
+      ) as any[];
+
+      if (existing.length > 0) {
+        const existingHotel = existing[0];
+
+        logResponse(requestId, 201, Date.now() - startTime, {
+          user_id: user.userId,
+          tenant_id: tenantId,
+          hotel_id: existingHotel.id,
+          idempotent: true,
+        });
+
+        const response = NextResponse.json(existingHotel, {
+          status: 201,
+          headers: {
+            'Location': `/api/hotels/${existingHotel.id}`,
+          },
+        });
+        response.headers.set('X-Request-Id', requestId);
+        addRateLimitHeaders(response, rateLimit);
+        return response;
       }
     }
 
@@ -201,161 +297,224 @@ export async function POST(request: NextRequest) {
       region
     } = body;
 
+    // 4. Validation
+    const validationErrors: Array<{ field: string; issue: string; message?: string }> = [];
+
+    if (!hotel_name || hotel_name.trim() === '') {
+      validationErrors.push({
+        field: 'hotel_name',
+        issue: 'required',
+        message: 'Hotel name is required'
+      });
+    }
+
+    if (!city || city.trim() === '') {
+      validationErrors.push({
+        field: 'city',
+        issue: 'required',
+        message: 'City is required'
+      });
+    }
+
+    if (validationErrors.length > 0) {
+      return validationErrorResponse(
+        'Invalid request data',
+        validationErrors,
+        requestId
+      );
+    }
+
+    // 5. Insert hotel
+    const insertFields = [
+      'google_place_id', 'organization_id', 'hotel_name', 'city', 'star_rating', 'hotel_category',
+      'room_count', 'is_boutique', 'address', 'latitude', 'longitude', 'google_maps_url',
+      'contact_phone', 'contact_email', 'notes', 'photo_url_1', 'photo_url_2', 'photo_url_3',
+      'rating', 'user_ratings_total', 'website', 'editorial_summary', 'place_types',
+      'price_level', 'business_status', 'region', 'status'
+    ];
+
+    const insertValues = [
+      google_place_id, parseInt(tenantId), hotel_name, city, star_rating, hotel_category,
+      room_count, is_boutique, address, latitude, longitude, google_maps_url,
+      contact_phone, contact_email, notes, photo_url_1, photo_url_2, photo_url_3,
+      rating, user_ratings_total, website, editorial_summary, place_types,
+      price_level, business_status, region, 'active'
+    ];
+
+    // Add idempotency_key if provided
+    if (idempotencyKey) {
+      insertFields.push('idempotency_key');
+      insertValues.push(idempotencyKey);
+    }
+
+    const placeholders = insertValues.map(() => '?').join(', ');
     const result = await query(
-      `INSERT INTO hotels (
-        google_place_id, organization_id, hotel_name, city, star_rating, hotel_category,
-        room_count, is_boutique, address, latitude, longitude, google_maps_url,
-        contact_phone, contact_email, notes,
-        photo_url_1, photo_url_2, photo_url_3, rating, user_ratings_total, website,
-        editorial_summary, place_types, price_level, business_status, region, status,
-        created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), NOW())`,
-      [
-        google_place_id, organization_id, hotel_name, city, star_rating, hotel_category,
-        room_count, is_boutique, address, latitude, longitude, google_maps_url,
-        contact_phone, contact_email, notes,
-        photo_url_1, photo_url_2, photo_url_3, rating, user_ratings_total, website,
-        editorial_summary, place_types, price_level, business_status, region
-      ]
+      `INSERT INTO hotels (${insertFields.join(', ')}) VALUES (${placeholders})`,
+      insertValues
     );
 
     const insertId = (result as any).insertId;
 
-    // Fetch the created hotel to return with timestamps
+    // 6. Fetch created hotel
     const [createdHotel] = await query(
       'SELECT * FROM hotels WHERE id = ?',
       [insertId]
     ) as any[];
 
-    const { createdResponse } = await import('@/lib/response');
-    const response = createdResponse(createdHotel, `/api/hotels/${insertId}`);
+    // 7. AUDIT: Log hotel creation
+    await auditLog(
+      parseInt(tenantId),
+      user.userId,
+      AuditActions.PROVIDER_CREATED,
+      AuditResources.PROVIDER,
+      insertId.toString(),
+      {
+        hotel_name,
+        city,
+        star_rating,
+      },
+      {
+        provider_type: 'hotel',
+        status: 'active',
+      },
+      request
+    );
 
-    // Store idempotency key if provided
-    if (idempotencyKey) {
-      const { storeIdempotencyKey } = await import('@/middleware/idempotency');
-      storeIdempotencyKey(idempotencyKey, response);
-    }
+    // 8. Log response
+    logResponse(requestId, 201, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      hotel_id: insertId,
+    });
 
+    // 9. Return 201 Created with Location header
+    const response = NextResponse.json(createdHotel, {
+      status: 201,
+      headers: {
+        'Location': `/api/hotels/${insertId}`,
+      },
+    });
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
     return response;
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(
-      internalServerErrorProblem('Failed to create hotel', '/api/hotels')
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to create hotel',
+      500,
+      undefined,
+      requestId
     );
   }
 }
 
 // PUT - Update hotel
 export async function PUT(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
-    // Require tenant
     const authResult = await requirePermission(request, 'providers', 'update');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
     const body = await request.json();
-    const { id } = body;
+    const { id, ...updateFields } = body;
 
     if (!id) {
-      return errorResponse({
-        type: 'https://httpstatuses.com/400',
-        title: 'Bad Request',
-        status: 400,
-        detail: 'Hotel ID is required',
-        instance: request.url,
-      });
+      return validationErrorResponse(
+        'Invalid request data',
+        [{ field: 'id', issue: 'required', message: 'Hotel ID is required' }],
+        requestId
+      );
     }
 
-    // Verify the hotel exists and belongs to this tenant
+    // Fetch existing hotel for audit trail
     const [existingHotel] = await query(
-      'SELECT id FROM hotels WHERE id = ? AND organization_id = ?',
+      'SELECT * FROM hotels WHERE id = ? AND organization_id = ?',
       [id, parseInt(tenantId)]
     ) as any[];
 
     if (!existingHotel) {
-      return errorResponse({
-        type: 'https://httpstatuses.com/404',
-        title: 'Not Found',
-        status: 404,
-        detail: `Hotel with ID ${id} not found or does not belong to your organization`,
-        instance: request.url,
-      });
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        'Hotel not found',
+        404,
+        undefined,
+        requestId
+      );
     }
 
-    // Update the hotel
+    // SECURITY: Update only if belongs to user's organization
     await query(
       `UPDATE hotels SET
-        google_place_id = ?,
-        hotel_name = ?,
-        city = ?,
-        star_rating = ?,
-        hotel_category = ?,
-        room_count = ?,
-        is_boutique = ?,
-        address = ?,
-        latitude = ?,
-        longitude = ?,
-        google_maps_url = ?,
-        contact_phone = ?,
-        contact_email = ?,
-        notes = ?,
-        photo_url_1 = ?,
-        photo_url_2 = ?,
-        photo_url_3 = ?,
-        rating = ?,
-        user_ratings_total = ?,
-        website = ?,
-        editorial_summary = ?,
-        place_types = ?,
-        price_level = ?,
-        business_status = ?,
-        status = ?,
-        updated_at = NOW()
+        google_place_id = ?, hotel_name = ?, city = ?, star_rating = ?,
+        hotel_category = ?, room_count = ?, is_boutique = ?, address = ?,
+        latitude = ?, longitude = ?, google_maps_url = ?, contact_phone = ?,
+        contact_email = ?, notes = ?, photo_url_1 = ?, photo_url_2 = ?,
+        photo_url_3 = ?, rating = ?, user_ratings_total = ?, website = ?,
+        editorial_summary = ?, place_types = ?, price_level = ?,
+        business_status = ?, status = ?, updated_at = NOW()
       WHERE id = ? AND organization_id = ?`,
       [
-        body.google_place_id,
-        body.hotel_name,
-        body.city,
-        body.star_rating,
-        body.hotel_category,
-        body.room_count,
-        body.is_boutique,
-        body.address,
-        body.latitude,
-        body.longitude,
-        body.google_maps_url,
-        body.contact_phone,
-        body.contact_email,
-        body.notes,
-        body.photo_url_1,
-        body.photo_url_2,
-        body.photo_url_3,
-        body.rating,
-        body.user_ratings_total,
-        body.website,
-        body.editorial_summary,
-        body.place_types,
-        body.price_level,
-        body.business_status,
-        body.status,
-        id,
-        parseInt(tenantId)
+        updateFields.google_place_id, updateFields.hotel_name, updateFields.city,
+        updateFields.star_rating, updateFields.hotel_category, updateFields.room_count,
+        updateFields.is_boutique, updateFields.address, updateFields.latitude,
+        updateFields.longitude, updateFields.google_maps_url, updateFields.contact_phone,
+        updateFields.contact_email, updateFields.notes, updateFields.photo_url_1,
+        updateFields.photo_url_2, updateFields.photo_url_3, updateFields.rating,
+        updateFields.user_ratings_total, updateFields.website, updateFields.editorial_summary,
+        updateFields.place_types, updateFields.price_level, updateFields.business_status,
+        updateFields.status, id, parseInt(tenantId)
       ]
     );
 
-    // Fetch and return the updated hotel
-    const [updatedHotel] = await query(
-      'SELECT * FROM hotels WHERE id = ?',
-      [id]
-    ) as any[];
+    // AUDIT: Log hotel update with changes
+    const changes: Record<string, any> = {};
+    if (updateFields.hotel_name !== existingHotel.hotel_name) changes.hotel_name = updateFields.hotel_name;
+    if (updateFields.city !== existingHotel.city) changes.city = updateFields.city;
+    if (updateFields.status !== existingHotel.status) changes.status = updateFields.status;
 
-    return successResponse(updatedHotel);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(
-      internalServerErrorProblem('Failed to update hotel', '/api/hotels')
+    await auditLog(
+      parseInt(tenantId),
+      user.userId,
+      AuditActions.PROVIDER_UPDATED,
+      AuditResources.PROVIDER,
+      id.toString(),
+      changes,
+      {
+        provider_type: 'hotel',
+        fields_updated: Object.keys(changes),
+      },
+      request
+    );
+
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      hotel_id: id,
+    });
+
+    const response = NextResponse.json({ success: true });
+    response.headers.set('X-Request-Id', requestId);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to update hotel',
+      500,
+      undefined,
+      requestId
     );
   }
 }

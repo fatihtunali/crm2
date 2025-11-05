@@ -1,161 +1,219 @@
-import { NextRequest } from 'next/server';
+/**
+ * Response Times Report API Endpoint - PHASE 1 STANDARDS APPLIED
+ * Demonstrates Phase 1 standards:
+ * - Request correlation IDs (X-Request-Id)
+ * - Standardized error responses with error codes
+ * - Rate limiting (100 requests/hour for reports)
+ * - Request/response logging
+ * - Standard headers
+ *
+ * GET /api/reports/operations/response-times - Get response times report
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { successResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
+import { standardErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 
 export async function GET(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
+    // 1. Authenticate and get tenant
     const authResult = await requirePermission(request, 'reports', 'read');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
-    const { searchParams } = new URL(request.url);
-    const period = searchParams.get('period') || 'last_30_days';
-    const { startDate, endDate } = calculateDateRange(period);
+    // 2. Rate limiting (100 requests per hour per user for read-only reports)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_reports`,
+      100,
+      3600
+    );
 
-    // Overall response time metrics
-    const [overallMetrics] = await query(`
-      SELECT
-        AVG(TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at)) as avg_response_hours,
-        MIN(TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at)) as min_response_hours,
-        MAX(TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at)) as max_response_hours,
-        COUNT(*) as total_responses
-      FROM customer_itineraries ci
-      JOIN quotes q ON ci.customer_email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
-      WHERE q.organization_id = ?
-      AND q.created_at BETWEEN ? AND ?
-      AND ci.created_at < q.created_at
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
-    // Time to send quote (draft to sent)
-    const [sendTimeMetrics] = await query(`
-      SELECT
-        AVG(TIMESTAMPDIFF(HOUR, created_at, sent_at)) as avg_send_hours,
-        MIN(TIMESTAMPDIFF(HOUR, created_at, sent_at)) as min_send_hours,
-        MAX(TIMESTAMPDIFF(HOUR, created_at, sent_at)) as max_send_hours
-      FROM quotes
-      WHERE organization_id = ?
-      AND sent_at IS NOT NULL
-      AND sent_at BETWEEN ? AND ?
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+const { searchParams } = new URL(request.url);
+        const period = searchParams.get('period') || 'last_30_days';
+        const { startDate, endDate } = calculateDateRange(period);
 
-    // Time to close (sent to accepted)
-    const [closeTimeMetrics] = await query(`
-      SELECT
-        AVG(TIMESTAMPDIFF(HOUR, sent_at, updated_at)) as avg_close_hours,
-        MIN(TIMESTAMPDIFF(HOUR, sent_at, updated_at)) as min_close_hours,
-        MAX(TIMESTAMPDIFF(HOUR, sent_at, updated_at)) as max_close_hours
-      FROM quotes
-      WHERE organization_id = ?
-      AND status = 'accepted'
-      AND sent_at IS NOT NULL
-      AND updated_at BETWEEN ? AND ?
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+        // Overall response time metrics
+        const [overallMetrics] = await query(`
+          SELECT
+            AVG(TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at)) as avg_response_hours,
+            MIN(TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at)) as min_response_hours,
+            MAX(TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at)) as max_response_hours,
+            COUNT(*) as total_responses
+          FROM customer_itineraries ci
+          JOIN quotes q ON ci.customer_email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
+          WHERE q.organization_id = ?
+          AND q.created_at BETWEEN ? AND ?
+          AND ci.created_at < q.created_at
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    // Response time by destination
-    const byDestination = await query(`
-      SELECT
-        q.destination,
-        AVG(TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at)) as avg_response_hours,
-        COUNT(*) as quote_count
-      FROM customer_itineraries ci
-      JOIN quotes q ON ci.customer_email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
-      WHERE q.organization_id = ?
-      AND q.created_at BETWEEN ? AND ?
-      AND ci.created_at < q.created_at
-      AND q.destination IS NOT NULL
-      GROUP BY q.destination
-      HAVING quote_count > 0
-      ORDER BY avg_response_hours ASC
-      LIMIT 10
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+        // Time to send quote (draft to sent)
+        const [sendTimeMetrics] = await query(`
+          SELECT
+            AVG(TIMESTAMPDIFF(HOUR, created_at, sent_at)) as avg_send_hours,
+            MIN(TIMESTAMPDIFF(HOUR, created_at, sent_at)) as min_send_hours,
+            MAX(TIMESTAMPDIFF(HOUR, created_at, sent_at)) as max_send_hours
+          FROM quotes
+          WHERE organization_id = ?
+          AND sent_at IS NOT NULL
+          AND sent_at BETWEEN ? AND ?
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    // Response time trend (daily average)
-    const dailyTrend = await query(`
-      SELECT
-        DATE(q.created_at) as date,
-        AVG(TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at)) as avg_response_hours,
-        COUNT(*) as responses
-      FROM customer_itineraries ci
-      JOIN quotes q ON ci.customer_email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
-      WHERE q.organization_id = ?
-      AND q.created_at BETWEEN ? AND ?
-      AND ci.created_at < q.created_at
-      GROUP BY DATE(q.created_at)
-      ORDER BY date DESC
-      LIMIT 30
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+        // Time to close (sent to accepted)
+        const [closeTimeMetrics] = await query(`
+          SELECT
+            AVG(TIMESTAMPDIFF(HOUR, sent_at, updated_at)) as avg_close_hours,
+            MIN(TIMESTAMPDIFF(HOUR, sent_at, updated_at)) as min_close_hours,
+            MAX(TIMESTAMPDIFF(HOUR, sent_at, updated_at)) as max_close_hours
+          FROM quotes
+          WHERE organization_id = ?
+          AND status = 'accepted'
+          AND sent_at IS NOT NULL
+          AND updated_at BETWEEN ? AND ?
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    // Response time distribution
-    const distribution = await query(`
-      SELECT
-        CASE
-          WHEN TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at) <= 2 THEN '0-2 hours'
-          WHEN TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at) <= 6 THEN '2-6 hours'
-          WHEN TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at) <= 24 THEN '6-24 hours'
-          WHEN TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at) <= 48 THEN '24-48 hours'
-          ELSE '48+ hours'
-        END as time_range,
-        COUNT(*) as count
-      FROM customer_itineraries ci
-      JOIN quotes q ON ci.customer_email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
-      WHERE q.organization_id = ?
-      AND q.created_at BETWEEN ? AND ?
-      AND ci.created_at < q.created_at
-      GROUP BY time_range
-      ORDER BY
-        CASE time_range
-          WHEN '0-2 hours' THEN 1
-          WHEN '2-6 hours' THEN 2
-          WHEN '6-24 hours' THEN 3
-          WHEN '24-48 hours' THEN 4
-          WHEN '48+ hours' THEN 5
-        END
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+        // Response time by destination
+        const byDestination = await query(`
+          SELECT
+            q.destination,
+            AVG(TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at)) as avg_response_hours,
+            COUNT(*) as quote_count
+          FROM customer_itineraries ci
+          JOIN quotes q ON ci.customer_email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
+          WHERE q.organization_id = ?
+          AND q.created_at BETWEEN ? AND ?
+          AND ci.created_at < q.created_at
+          AND q.destination IS NOT NULL
+          GROUP BY q.destination
+          HAVING quote_count > 0
+          ORDER BY avg_response_hours ASC
+          LIMIT 10
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    const data = {
-      period: { start_date: startDate, end_date: endDate },
-      overallMetrics: {
-        avgResponseHours: Math.round(parseFloat(overallMetrics?.avg_response_hours || 0)),
-        minResponseHours: Math.round(parseFloat(overallMetrics?.min_response_hours || 0)),
-        maxResponseHours: Math.round(parseFloat(overallMetrics?.max_response_hours || 0)),
-        totalResponses: parseInt(overallMetrics?.total_responses || 0)
-      },
-      sendTimeMetrics: {
-        avgSendHours: Math.round(parseFloat(sendTimeMetrics?.avg_send_hours || 0)),
-        minSendHours: Math.round(parseFloat(sendTimeMetrics?.min_send_hours || 0)),
-        maxSendHours: Math.round(parseFloat(sendTimeMetrics?.max_send_hours || 0))
-      },
-      closeTimeMetrics: {
-        avgCloseHours: Math.round(parseFloat(closeTimeMetrics?.avg_close_hours || 0)),
-        minCloseHours: Math.round(parseFloat(closeTimeMetrics?.min_close_hours || 0)),
-        maxCloseHours: Math.round(parseFloat(closeTimeMetrics?.max_close_hours || 0))
-      },
-      byDestination: byDestination.map((d: any) => ({
-        destination: d.destination,
-        avgResponseHours: Math.round(parseFloat(d.avg_response_hours || 0)),
-        quoteCount: parseInt(d.quote_count || 0)
-      })),
-      dailyTrend: dailyTrend.map((t: any) => ({
-        date: t.date,
-        avgResponseHours: Math.round(parseFloat(t.avg_response_hours || 0)),
-        responses: parseInt(t.responses || 0)
-      })).reverse(),
-      distribution: distribution.map((d: any) => ({
-        timeRange: d.time_range,
-        count: parseInt(d.count || 0)
-      }))
-    };
+        // Response time trend (daily average)
+        const dailyTrend = await query(`
+          SELECT
+            DATE(q.created_at) as date,
+            AVG(TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at)) as avg_response_hours,
+            COUNT(*) as responses
+          FROM customer_itineraries ci
+          JOIN quotes q ON ci.customer_email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
+          WHERE q.organization_id = ?
+          AND q.created_at BETWEEN ? AND ?
+          AND ci.created_at < q.created_at
+          GROUP BY DATE(q.created_at)
+          ORDER BY date DESC
+          LIMIT 30
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    return successResponse(data);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(internalServerErrorProblem(request.url));
+        // Response time distribution
+        const distribution = await query(`
+          SELECT
+            CASE
+              WHEN TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at) <= 2 THEN '0-2 hours'
+              WHEN TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at) <= 6 THEN '2-6 hours'
+              WHEN TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at) <= 24 THEN '6-24 hours'
+              WHEN TIMESTAMPDIFF(HOUR, ci.created_at, q.created_at) <= 48 THEN '24-48 hours'
+              ELSE '48+ hours'
+            END as time_range,
+            COUNT(*) as count
+          FROM customer_itineraries ci
+          JOIN quotes q ON ci.customer_email COLLATE utf8mb4_unicode_ci = q.customer_email COLLATE utf8mb4_unicode_ci
+          WHERE q.organization_id = ?
+          AND q.created_at BETWEEN ? AND ?
+          AND ci.created_at < q.created_at
+          GROUP BY time_range
+          ORDER BY
+            CASE time_range
+              WHEN '0-2 hours' THEN 1
+              WHEN '2-6 hours' THEN 2
+              WHEN '6-24 hours' THEN 3
+              WHEN '24-48 hours' THEN 4
+              WHEN '48+ hours' THEN 5
+            END
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
+
+        const data = {
+          period: { start_date: startDate, end_date: endDate },
+          overallMetrics: {
+            avgResponseHours: Math.round(parseFloat(overallMetrics?.avg_response_hours || 0)),
+            minResponseHours: Math.round(parseFloat(overallMetrics?.min_response_hours || 0)),
+            maxResponseHours: Math.round(parseFloat(overallMetrics?.max_response_hours || 0)),
+            totalResponses: parseInt(overallMetrics?.total_responses || 0)
+          },
+          sendTimeMetrics: {
+            avgSendHours: Math.round(parseFloat(sendTimeMetrics?.avg_send_hours || 0)),
+            minSendHours: Math.round(parseFloat(sendTimeMetrics?.min_send_hours || 0)),
+            maxSendHours: Math.round(parseFloat(sendTimeMetrics?.max_send_hours || 0))
+          },
+          closeTimeMetrics: {
+            avgCloseHours: Math.round(parseFloat(closeTimeMetrics?.avg_close_hours || 0)),
+            minCloseHours: Math.round(parseFloat(closeTimeMetrics?.min_close_hours || 0)),
+            maxCloseHours: Math.round(parseFloat(closeTimeMetrics?.max_close_hours || 0))
+          },
+          byDestination: byDestination.map((d: any) => ({
+            destination: d.destination,
+            avgResponseHours: Math.round(parseFloat(d.avg_response_hours || 0)),
+            quoteCount: parseInt(d.quote_count || 0)
+          })),
+          dailyTrend: dailyTrend.map((t: any) => ({
+            date: t.date,
+            avgResponseHours: Math.round(parseFloat(t.avg_response_hours || 0)),
+            responses: parseInt(t.responses || 0)
+          })).reverse(),
+          distribution: distribution.map((d: any) => ({
+            timeRange: d.time_range,
+            count: parseInt(d.count || 0)
+          }))
+        };
+
+    // Create response with headers
+    const response = NextResponse.json({ data });
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+
+    // Log response
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      report: 'operations_response_times',
+    });
+
+    return response;
+  } catch (error: any) {
+    // Log error
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'An unexpected error occurred while generating the report',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
-
 function calculateDateRange(period: string) {
   const now = new Date();
   let startDate: Date;

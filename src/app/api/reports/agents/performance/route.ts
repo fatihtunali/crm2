@@ -1,24 +1,59 @@
-import { NextRequest } from 'next/server';
+/**
+ * Agents Performance Report API Endpoint - PHASE 1 STANDARDS APPLIED
+ * Demonstrates Phase 1 standards:
+ * - Request correlation IDs (X-Request-Id)
+ * - Standardized error responses with error codes
+ * - Rate limiting (100 requests/hour for reports)
+ * - Request/response logging
+ * - Standard headers
+ *
+ * GET /api/reports/agents/performance - Get agent performance report
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { successResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
+import { standardErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import { createMoney } from '@/lib/money';
 
 export async function GET(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
+    // 1. Authenticate and get tenant
     const authResult = await requirePermission(request, 'reports', 'read');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
+    // 2. Rate limiting (100 requests per hour per user for read-only reports)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_reports`,
+      100,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
+
+    // 3. Parse query parameters
     const { searchParams } = new URL(request.url);
     const period = searchParams.get('period') || 'last_30_days';
     const { startDate, endDate } = calculateDateRange(period);
 
-    // Note: Assuming agents are tour operators (stored in clients.tour_operator_id)
-    // If there's a separate agents table, this query would need adjustment
-
+    // 4. Execute report queries
     // Agent performance (using tour_operator_id from clients)
     const agentPerformance = await query(`
       SELECT
@@ -93,6 +128,7 @@ export async function GET(request: NextRequest) {
       ORDER BY c.tour_operator_id, revenue DESC
     `, [parseInt(tenantId), startDate, endDate]) as any[];
 
+    // 5. Transform data
     // Format agent performance data
     const performanceData = agentPerformance.map((a: any) => {
       const agentId = a.agent_id;
@@ -148,10 +184,34 @@ export async function GET(request: NextRequest) {
       topDestinationsByAgent: destinationsGrouped
     };
 
-    return successResponse(data);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(internalServerErrorProblem(request.url));
+    // 6. Create response with headers
+    const response = NextResponse.json({ data });
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+
+    // 7. Log response
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      report: 'agents_performance',
+      period,
+    });
+
+    return response;
+  } catch (error: any) {
+    // Log error
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'An unexpected error occurred while generating the report',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 

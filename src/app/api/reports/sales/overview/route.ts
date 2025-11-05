@@ -1,206 +1,264 @@
-import { NextRequest } from 'next/server';
+/**
+ * Sales Overview Report API Endpoint - PHASE 1 STANDARDS APPLIED
+ * Demonstrates Phase 1 standards:
+ * - Request correlation IDs (X-Request-Id)
+ * - Standardized error responses with error codes
+ * - Rate limiting (100 requests/hour for reports)
+ * - Request/response logging
+ * - Standard headers
+ *
+ * GET /api/reports/sales/overview - Get sales overview report
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { successResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
+import { standardErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import { createMoney } from '@/lib/money';
 
 export async function GET(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
-    // Require tenant
+    // 1. Authenticate and get tenant
     const authResult = await requirePermission(request, 'reports', 'read');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
-    // Parse query parameters
-    const { searchParams } = new URL(request.url);
-    const period = searchParams.get('period') || 'last_30_days';
-    const { startDate, endDate } = calculateDateRange(period);
+    // 2. Rate limiting (100 requests per hour per user for read-only reports)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_reports`,
+      100,
+      3600
+    );
 
-    // Total revenue and bookings
-    const [summaryResult] = await query(`
-      SELECT
-        SUM(total_price) as total_revenue,
-        COUNT(*) as total_bookings,
-        AVG(total_price) as avg_booking_value,
-        MIN(total_price) as min_booking,
-        MAX(total_price) as max_booking
-      FROM quotes
-      WHERE organization_id = ?
-      AND status = 'accepted'
-      AND start_date BETWEEN ? AND ?
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
-    // Conversion rate
-    const [conversionResult] = await query(`
-      SELECT
-        COUNT(CASE WHEN status = 'accepted' THEN 1 END) as accepted,
-        COUNT(CASE WHEN status = 'sent' THEN 1 END) as sent,
-        COUNT(CASE WHEN status = 'rejected' THEN 1 END) as rejected,
-        COUNT(CASE WHEN status = 'draft' THEN 1 END) as draft
-      FROM quotes
-      WHERE organization_id = ?
-      AND created_at BETWEEN ? AND ?
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+// Require tenant
+        // Parse query parameters
+        const { searchParams } = new URL(request.url);
+        const period = searchParams.get('period') || 'last_30_days';
+        const { startDate, endDate } = calculateDateRange(period);
 
-    const accepted = parseInt(conversionResult?.accepted || 0);
-    const sent = parseInt(conversionResult?.sent || 0);
-    const totalSent = accepted + sent;
-    const conversionRate = totalSent > 0 ? (accepted / totalSent) * 100 : 0;
+        // Total revenue and bookings
+        const [summaryResult] = await query(`
+          SELECT
+            SUM(total_price) as total_revenue,
+            COUNT(*) as total_bookings,
+            AVG(total_price) as avg_booking_value,
+            MIN(total_price) as min_booking,
+            MAX(total_price) as max_booking
+          FROM quotes
+          WHERE organization_id = ?
+          AND status = 'accepted'
+          AND start_date BETWEEN ? AND ?
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    // Revenue by destination
-    const revenueByDestination = await query(`
-      SELECT
-        destination,
-        SUM(total_price) as revenue,
-        COUNT(*) as bookings,
-        AVG(total_price) as avg_value
-      FROM quotes
-      WHERE organization_id = ?
-      AND status = 'accepted'
-      AND start_date BETWEEN ? AND ?
-      AND destination IS NOT NULL
-      GROUP BY destination
-      ORDER BY revenue DESC
-      LIMIT 10
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+        // Conversion rate
+        const [conversionResult] = await query(`
+          SELECT
+            COUNT(CASE WHEN status = 'accepted' THEN 1 END) as accepted,
+            COUNT(CASE WHEN status = 'sent' THEN 1 END) as sent,
+            COUNT(CASE WHEN status = 'rejected' THEN 1 END) as rejected,
+            COUNT(CASE WHEN status = 'draft' THEN 1 END) as draft
+          FROM quotes
+          WHERE organization_id = ?
+          AND created_at BETWEEN ? AND ?
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    // Revenue by tour type
-    const revenueByTourType = await query(`
-      SELECT
-        tour_type,
-        SUM(total_price) as revenue,
-        COUNT(*) as bookings,
-        AVG(total_price) as avg_value
-      FROM quotes
-      WHERE organization_id = ?
-      AND status = 'accepted'
-      AND start_date BETWEEN ? AND ?
-      AND tour_type IS NOT NULL
-      GROUP BY tour_type
-      ORDER BY revenue DESC
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+        const accepted = parseInt(conversionResult?.accepted || 0);
+        const sent = parseInt(conversionResult?.sent || 0);
+        const totalSent = accepted + sent;
+        const conversionRate = totalSent > 0 ? (accepted / totalSent) * 100 : 0;
 
-    // Revenue by category (B2B, B2C, etc.)
-    const revenueByCategory = await query(`
-      SELECT
-        category,
-        SUM(total_price) as revenue,
-        COUNT(*) as bookings,
-        AVG(total_price) as avg_value
-      FROM quotes
-      WHERE organization_id = ?
-      AND status = 'accepted'
-      AND start_date BETWEEN ? AND ?
-      AND category IS NOT NULL
-      GROUP BY category
-      ORDER BY revenue DESC
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+        // Revenue by destination
+        const revenueByDestination = await query(`
+          SELECT
+            destination,
+            SUM(total_price) as revenue,
+            COUNT(*) as bookings,
+            AVG(total_price) as avg_value
+          FROM quotes
+          WHERE organization_id = ?
+          AND status = 'accepted'
+          AND start_date BETWEEN ? AND ?
+          AND destination IS NOT NULL
+          GROUP BY destination
+          ORDER BY revenue DESC
+          LIMIT 10
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    // Time series data (daily aggregations)
-    const timeSeries = await query(`
-      SELECT
-        DATE(start_date) as date,
-        SUM(total_price) as revenue,
-        COUNT(*) as bookings
-      FROM quotes
-      WHERE organization_id = ?
-      AND status = 'accepted'
-      AND start_date BETWEEN ? AND ?
-      GROUP BY DATE(start_date)
-      ORDER BY date ASC
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+        // Revenue by tour type
+        const revenueByTourType = await query(`
+          SELECT
+            tour_type,
+            SUM(total_price) as revenue,
+            COUNT(*) as bookings,
+            AVG(total_price) as avg_value
+          FROM quotes
+          WHERE organization_id = ?
+          AND status = 'accepted'
+          AND start_date BETWEEN ? AND ?
+          AND tour_type IS NOT NULL
+          GROUP BY tour_type
+          ORDER BY revenue DESC
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    // Monthly aggregation (if period is longer than 90 days)
-    const monthlyData = await query(`
-      SELECT
-        DATE_FORMAT(start_date, '%Y-%m') as month,
-        SUM(total_price) as revenue,
-        COUNT(*) as bookings,
-        AVG(total_price) as avg_value
-      FROM quotes
-      WHERE organization_id = ?
-      AND status = 'accepted'
-      AND start_date BETWEEN ? AND ?
-      GROUP BY DATE_FORMAT(start_date, '%Y-%m')
-      ORDER BY month ASC
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+        // Revenue by category (B2B, B2C, etc.)
+        const revenueByCategory = await query(`
+          SELECT
+            category,
+            SUM(total_price) as revenue,
+            COUNT(*) as bookings,
+            AVG(total_price) as avg_value
+          FROM quotes
+          WHERE organization_id = ?
+          AND status = 'accepted'
+          AND start_date BETWEEN ? AND ?
+          AND category IS NOT NULL
+          GROUP BY category
+          ORDER BY revenue DESC
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    // Average group size
-    const [groupSizeResult] = await query(`
-      SELECT
-        AVG(adults + children) as avg_group_size,
-        SUM(adults + children) as total_pax
-      FROM quotes
-      WHERE organization_id = ?
-      AND status = 'accepted'
-      AND start_date BETWEEN ? AND ?
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+        // Time series data (daily aggregations)
+        const timeSeries = await query(`
+          SELECT
+            DATE(start_date) as date,
+            SUM(total_price) as revenue,
+            COUNT(*) as bookings
+          FROM quotes
+          WHERE organization_id = ?
+          AND status = 'accepted'
+          AND start_date BETWEEN ? AND ?
+          GROUP BY DATE(start_date)
+          ORDER BY date ASC
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    // Format response
-    const data = {
-      period: {
-        start_date: startDate,
-        end_date: endDate,
-        label: getPeriodLabel(period)
-      },
-      summary: {
-        totalRevenue: createMoney(parseFloat(summaryResult?.total_revenue || 0), 'EUR'),
-        totalBookings: parseInt(summaryResult?.total_bookings || 0),
-        avgBookingValue: createMoney(parseFloat(summaryResult?.avg_booking_value || 0), 'EUR'),
-        minBooking: createMoney(parseFloat(summaryResult?.min_booking || 0), 'EUR'),
-        maxBooking: createMoney(parseFloat(summaryResult?.max_booking || 0), 'EUR'),
-        conversionRate: Math.round(conversionRate * 100) / 100,
-        avgGroupSize: Math.round(parseFloat(groupSizeResult?.avg_group_size || 0) * 10) / 10,
-        totalPax: parseInt(groupSizeResult?.total_pax || 0)
-      },
-      conversionFunnel: {
-        draft: parseInt(conversionResult?.draft || 0),
-        sent: parseInt(conversionResult?.sent || 0),
-        accepted: parseInt(conversionResult?.accepted || 0),
-        rejected: parseInt(conversionResult?.rejected || 0)
-      },
-      byDestination: revenueByDestination.map((d: any) => ({
-        destination: d.destination,
-        revenue: createMoney(parseFloat(d.revenue || 0), 'EUR'),
-        bookings: parseInt(d.bookings || 0),
-        avgValue: createMoney(parseFloat(d.avg_value || 0), 'EUR')
-      })),
-      byTourType: revenueByTourType.map((t: any) => ({
-        tourType: t.tour_type,
-        revenue: createMoney(parseFloat(t.revenue || 0), 'EUR'),
-        bookings: parseInt(t.bookings || 0),
-        avgValue: createMoney(parseFloat(t.avg_value || 0), 'EUR')
-      })),
-      byCategory: revenueByCategory.map((c: any) => ({
-        category: c.category,
-        revenue: createMoney(parseFloat(c.revenue || 0), 'EUR'),
-        bookings: parseInt(c.bookings || 0),
-        avgValue: createMoney(parseFloat(c.avg_value || 0), 'EUR')
-      })),
-      timeSeries: {
-        daily: timeSeries.map((t: any) => ({
-          date: t.date,
-          revenue: createMoney(parseFloat(t.revenue || 0), 'EUR'),
-          bookings: parseInt(t.bookings || 0)
-        })),
-        monthly: monthlyData.map((m: any) => ({
-          month: m.month,
-          revenue: createMoney(parseFloat(m.revenue || 0), 'EUR'),
-          bookings: parseInt(m.bookings || 0),
-          avgValue: createMoney(parseFloat(m.avg_value || 0), 'EUR')
-        }))
-      }
-    };
+        // Monthly aggregation (if period is longer than 90 days)
+        const monthlyData = await query(`
+          SELECT
+            DATE_FORMAT(start_date, '%Y-%m') as month,
+            SUM(total_price) as revenue,
+            COUNT(*) as bookings,
+            AVG(total_price) as avg_value
+          FROM quotes
+          WHERE organization_id = ?
+          AND status = 'accepted'
+          AND start_date BETWEEN ? AND ?
+          GROUP BY DATE_FORMAT(start_date, '%Y-%m')
+          ORDER BY month ASC
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    return successResponse(data);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(internalServerErrorProblem(request.url));
+        // Average group size
+        const [groupSizeResult] = await query(`
+          SELECT
+            AVG(adults + children) as avg_group_size,
+            SUM(adults + children) as total_pax
+          FROM quotes
+          WHERE organization_id = ?
+          AND status = 'accepted'
+          AND start_date BETWEEN ? AND ?
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
+
+        // Format response
+        const data = {
+          period: {
+            start_date: startDate,
+            end_date: endDate,
+            label: getPeriodLabel(period)
+          },
+          summary: {
+            totalRevenue: createMoney(parseFloat(summaryResult?.total_revenue || 0), 'EUR'),
+            totalBookings: parseInt(summaryResult?.total_bookings || 0),
+            avgBookingValue: createMoney(parseFloat(summaryResult?.avg_booking_value || 0), 'EUR'),
+            minBooking: createMoney(parseFloat(summaryResult?.min_booking || 0), 'EUR'),
+            maxBooking: createMoney(parseFloat(summaryResult?.max_booking || 0), 'EUR'),
+            conversionRate: Math.round(conversionRate * 100) / 100,
+            avgGroupSize: Math.round(parseFloat(groupSizeResult?.avg_group_size || 0) * 10) / 10,
+            totalPax: parseInt(groupSizeResult?.total_pax || 0)
+          },
+          conversionFunnel: {
+            draft: parseInt(conversionResult?.draft || 0),
+            sent: parseInt(conversionResult?.sent || 0),
+            accepted: parseInt(conversionResult?.accepted || 0),
+            rejected: parseInt(conversionResult?.rejected || 0)
+          },
+          byDestination: revenueByDestination.map((d: any) => ({
+            destination: d.destination,
+            revenue: createMoney(parseFloat(d.revenue || 0), 'EUR'),
+            bookings: parseInt(d.bookings || 0),
+            avgValue: createMoney(parseFloat(d.avg_value || 0), 'EUR')
+          })),
+          byTourType: revenueByTourType.map((t: any) => ({
+            tourType: t.tour_type,
+            revenue: createMoney(parseFloat(t.revenue || 0), 'EUR'),
+            bookings: parseInt(t.bookings || 0),
+            avgValue: createMoney(parseFloat(t.avg_value || 0), 'EUR')
+          })),
+          byCategory: revenueByCategory.map((c: any) => ({
+            category: c.category,
+            revenue: createMoney(parseFloat(c.revenue || 0), 'EUR'),
+            bookings: parseInt(c.bookings || 0),
+            avgValue: createMoney(parseFloat(c.avg_value || 0), 'EUR')
+          })),
+          timeSeries: {
+            daily: timeSeries.map((t: any) => ({
+              date: t.date,
+              revenue: createMoney(parseFloat(t.revenue || 0), 'EUR'),
+              bookings: parseInt(t.bookings || 0)
+            })),
+            monthly: monthlyData.map((m: any) => ({
+              month: m.month,
+              revenue: createMoney(parseFloat(m.revenue || 0), 'EUR'),
+              bookings: parseInt(m.bookings || 0),
+              avgValue: createMoney(parseFloat(m.avg_value || 0), 'EUR')
+            }))
+          }
+        };
+
+    // Create response with headers
+    const response = NextResponse.json({ data });
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+
+    // Log response
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      report: 'sales_overview',
+    });
+
+    return response;
+  } catch (error: any) {
+    // Log error
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'An unexpected error occurred while generating the report',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
-
 function calculateDateRange(period: string) {
   const now = new Date();
   let startDate: Date;

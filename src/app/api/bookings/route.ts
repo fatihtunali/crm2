@@ -4,14 +4,8 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { parsePaginationParams } from '@/lib/pagination';
-import {
-  successResponse,
-  createdResponse,
-  errorResponse,
-  badRequestProblem,
-  internalServerErrorProblem,
-} from '@/lib/response';
+import { parseStandardPaginationParams, buildStandardListResponse } from '@/lib/pagination';
+import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import {
   createBookingFromQuotation,
   getBookings,
@@ -19,6 +13,8 @@ import {
 } from '@/lib/booking-lifecycle';
 import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import type { CreateBookingRequest, Booking } from '@/types/api';
 
 /**
@@ -26,6 +22,9 @@ import type { CreateBookingRequest, Booking } from '@/types/api';
  * List all bookings with pagination
  */
 export async function GET(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     const authResult = await requirePermission(request, 'bookings', 'read');
     if ('error' in authResult) {
@@ -33,8 +32,26 @@ export async function GET(request: NextRequest) {
     }
     const { user, tenantId } = authResult;
 
+    // Rate limiting (100 requests per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}`,
+      100,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
+
     const { searchParams } = new URL(request.url);
-    const { page, pageSize, offset } = parsePaginationParams(searchParams);
+    const { page, pageSize, offset } = parseStandardPaginationParams(searchParams);
 
     // Fetch bookings and total count
     const [bookings, total] = await Promise.all([
@@ -42,21 +59,43 @@ export async function GET(request: NextRequest) {
       getBookingsCount(),
     ]);
 
-    // Build paginated response following the PagedResponse format
-    const response = {
-      data: bookings,
-      meta: {
-        page,
-        page_size: pageSize,
-        total,
-      },
-    };
+    // Build base URL for hypermedia links
+    const url = new URL(request.url);
+    const baseUrl = `${url.protocol}//${url.host}${url.pathname}`;
 
-    return successResponse(response);
-  } catch (error) {
-    console.error('Error fetching bookings:', error);
-    return errorResponse(
-      internalServerErrorProblem('Failed to fetch bookings', '/api/bookings')
+    const responseData = buildStandardListResponse(
+      bookings,
+      total,
+      page,
+      pageSize,
+      baseUrl,
+      {}
+    );
+
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      results_count: (bookings as any[]).length,
+      total_results: total,
+      page,
+      page_size: pageSize,
+    });
+
+    const response = NextResponse.json(responseData);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    return response;
+  } catch (error: any) {
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to fetch bookings',
+      500,
+      undefined,
+      requestId
     );
   }
 }
@@ -67,6 +106,9 @@ export async function GET(request: NextRequest) {
  * Requires Idempotency-Key header
  */
 export async function POST(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     const authResult = await requirePermission(request, 'bookings', 'create');
     if ('error' in authResult) {
@@ -74,15 +116,32 @@ export async function POST(request: NextRequest) {
     }
     const { user, tenantId } = authResult;
 
+    // Rate limiting (50 creates per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_create`,
+      50,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Creation rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
+
     // Check for idempotency key
     const idempotencyKey = request.headers.get('Idempotency-Key');
 
     if (!idempotencyKey) {
-      return errorResponse(
-        badRequestProblem(
-          'Idempotency-Key header is required for booking creation',
-          '/api/bookings'
-        )
+      return validationErrorResponse(
+        'Idempotency-Key header is required for booking creation',
+        [{ field: 'Idempotency-Key', issue: 'required', message: 'Idempotency-Key header is required' }],
+        requestId
       );
     }
 
@@ -97,45 +156,69 @@ export async function POST(request: NextRequest) {
 
     // Validate request
     if (!body.quotation_id || typeof body.quotation_id !== 'number') {
-      return errorResponse(
-        badRequestProblem(
-          'quotation_id is required and must be a number',
-          '/api/bookings'
-        )
+      return validationErrorResponse(
+        'Invalid request data',
+        [{ field: 'quotation_id', issue: 'required', message: 'quotation_id is required and must be a number' }],
+        requestId
       );
     }
 
     // Create booking from quotation
     const booking = await createBookingFromQuotation(body.quotation_id);
 
+    logResponse(requestId, 201, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      booking_id: booking.id,
+    });
+
     // Build response
-    const response = createdResponse(
-      booking,
-      `/api/bookings/${booking.id}`
-    );
+    const response = NextResponse.json(booking, {
+      status: 201,
+      headers: {
+        'Location': `/api/bookings/${booking.id}`,
+      },
+    });
+
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
 
     // Store idempotency key
     storeIdempotencyKey(idempotencyKey, response);
 
     return response;
   } catch (error: any) {
-    console.error('Error creating booking:', error);
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
 
     // Handle specific error cases
     if (error.message?.includes('not found')) {
-      return errorResponse(
-        badRequestProblem(error.message, '/api/bookings')
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        error.message,
+        404,
+        undefined,
+        requestId
       );
     }
 
     if (error.message?.includes('already been accepted')) {
-      return errorResponse(
-        badRequestProblem(error.message, '/api/bookings')
+      return standardErrorResponse(
+        ErrorCodes.CONFLICT,
+        error.message,
+        409,
+        undefined,
+        requestId
       );
     }
 
-    return errorResponse(
-      internalServerErrorProblem('Failed to create booking', '/api/bookings')
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to create booking',
+      500,
+      undefined,
+      requestId
     );
   }
 }

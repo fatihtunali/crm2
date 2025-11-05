@@ -1,95 +1,153 @@
-import { NextRequest } from 'next/server';
+/**
+ * Sales by Destination Report API Endpoint - PHASE 1 STANDARDS APPLIED
+ * Demonstrates Phase 1 standards:
+ * - Request correlation IDs (X-Request-Id)
+ * - Standardized error responses with error codes
+ * - Rate limiting (100 requests/hour for reports)
+ * - Request/response logging
+ * - Standard headers
+ *
+ * GET /api/reports/sales/destinations - Get sales by destination report
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { successResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
+import { standardErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import { createMoney } from '@/lib/money';
 
 export async function GET(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
+    // 1. Authenticate and get tenant
     const authResult = await requirePermission(request, 'reports', 'read');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
-    const { searchParams } = new URL(request.url);
-    const period = searchParams.get('period') || 'last_30_days';
-    const { startDate, endDate } = calculateDateRange(period);
+    // 2. Rate limiting (100 requests per hour per user for read-only reports)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_reports`,
+      100,
+      3600
+    );
 
-    // Revenue by destination with detailed metrics
-    const destinationData = await query(`
-      SELECT
-        destination,
-        SUM(total_price) as total_revenue,
-        COUNT(*) as booking_count,
-        AVG(total_price) as avg_booking_value,
-        SUM(adults + children) as total_pax,
-        AVG(adults + children) as avg_group_size,
-        MIN(total_price) as min_value,
-        MAX(total_price) as max_value,
-        AVG(DATEDIFF(end_date, start_date)) as avg_duration
-      FROM quotes
-      WHERE organization_id = ?
-      AND status = 'accepted'
-      AND start_date BETWEEN ? AND ?
-      AND destination IS NOT NULL
-      GROUP BY destination
-      ORDER BY total_revenue DESC
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
-
-    // Monthly trend by destination (top 5)
-    const topDestinations = destinationData.slice(0, 5).map((d: any) => d.destination);
-    let monthlyTrends = [];
-
-    if (topDestinations.length > 0) {
-      monthlyTrends = await query(`
-        SELECT
-          destination,
-          DATE_FORMAT(start_date, '%Y-%m') as month,
-          SUM(total_price) as revenue,
-          COUNT(*) as bookings
-        FROM quotes
-        WHERE organization_id = ?
-        AND status = 'accepted'
-        AND start_date BETWEEN ? AND ?
-        AND destination IN (${topDestinations.map(() => '?').join(',')})
-        GROUP BY destination, DATE_FORMAT(start_date, '%Y-%m')
-        ORDER BY destination, month
-      `, [parseInt(tenantId), startDate, endDate, ...topDestinations]) as any[];
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
     }
 
-    // Market share calculation
-    const totalRevenue = destinationData.reduce((sum: number, d: any) => sum + parseFloat(d.total_revenue || 0), 0);
+const { searchParams } = new URL(request.url);
+        const period = searchParams.get('period') || 'last_30_days';
+        const { startDate, endDate } = calculateDateRange(period);
 
-    const data = {
-      period: { start_date: startDate, end_date: endDate },
-      destinations: destinationData.map((d: any) => ({
-        destination: d.destination,
-        totalRevenue: createMoney(parseFloat(d.total_revenue || 0), 'EUR'),
-        bookingCount: parseInt(d.booking_count || 0),
-        avgBookingValue: createMoney(parseFloat(d.avg_booking_value || 0), 'EUR'),
-        totalPax: parseInt(d.total_pax || 0),
-        avgGroupSize: Math.round(parseFloat(d.avg_group_size || 0) * 10) / 10,
-        minValue: createMoney(parseFloat(d.min_value || 0), 'EUR'),
-        maxValue: createMoney(parseFloat(d.max_value || 0), 'EUR'),
-        avgDuration: Math.round(parseFloat(d.avg_duration || 0)),
-        marketShare: totalRevenue > 0 ? Math.round((parseFloat(d.total_revenue || 0) / totalRevenue) * 100 * 100) / 100 : 0
-      })),
-      monthlyTrends: monthlyTrends.map((t: any) => ({
-        destination: t.destination,
-        month: t.month,
-        revenue: createMoney(parseFloat(t.revenue || 0), 'EUR'),
-        bookings: parseInt(t.bookings || 0)
-      }))
-    };
+        // Revenue by destination with detailed metrics
+        const destinationData = await query(`
+          SELECT
+            destination,
+            SUM(total_price) as total_revenue,
+            COUNT(*) as booking_count,
+            AVG(total_price) as avg_booking_value,
+            SUM(adults + children) as total_pax,
+            AVG(adults + children) as avg_group_size,
+            MIN(total_price) as min_value,
+            MAX(total_price) as max_value,
+            AVG(DATEDIFF(end_date, start_date)) as avg_duration
+          FROM quotes
+          WHERE organization_id = ?
+          AND status = 'accepted'
+          AND start_date BETWEEN ? AND ?
+          AND destination IS NOT NULL
+          GROUP BY destination
+          ORDER BY total_revenue DESC
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    return successResponse(data);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(internalServerErrorProblem(request.url));
+        // Monthly trend by destination (top 5)
+        const topDestinations = destinationData.slice(0, 5).map((d: any) => d.destination);
+        let monthlyTrends = [];
+
+        if (topDestinations.length > 0) {
+          monthlyTrends = await query(`
+            SELECT
+              destination,
+              DATE_FORMAT(start_date, '%Y-%m') as month,
+              SUM(total_price) as revenue,
+              COUNT(*) as bookings
+            FROM quotes
+            WHERE organization_id = ?
+            AND status = 'accepted'
+            AND start_date BETWEEN ? AND ?
+            AND destination IN (${topDestinations.map(() => '?').join(',')})
+            GROUP BY destination, DATE_FORMAT(start_date, '%Y-%m')
+            ORDER BY destination, month
+          `, [parseInt(tenantId), startDate, endDate, ...topDestinations]) as any[];
+        }
+
+        // Market share calculation
+        const totalRevenue = destinationData.reduce((sum: number, d: any) => sum + parseFloat(d.total_revenue || 0), 0);
+
+        const data = {
+          period: { start_date: startDate, end_date: endDate },
+          destinations: destinationData.map((d: any) => ({
+            destination: d.destination,
+            totalRevenue: createMoney(parseFloat(d.total_revenue || 0), 'EUR'),
+            bookingCount: parseInt(d.booking_count || 0),
+            avgBookingValue: createMoney(parseFloat(d.avg_booking_value || 0), 'EUR'),
+            totalPax: parseInt(d.total_pax || 0),
+            avgGroupSize: Math.round(parseFloat(d.avg_group_size || 0) * 10) / 10,
+            minValue: createMoney(parseFloat(d.min_value || 0), 'EUR'),
+            maxValue: createMoney(parseFloat(d.max_value || 0), 'EUR'),
+            avgDuration: Math.round(parseFloat(d.avg_duration || 0)),
+            marketShare: totalRevenue > 0 ? Math.round((parseFloat(d.total_revenue || 0) / totalRevenue) * 100 * 100) / 100 : 0
+          })),
+          monthlyTrends: monthlyTrends.map((t: any) => ({
+            destination: t.destination,
+            month: t.month,
+            revenue: createMoney(parseFloat(t.revenue || 0), 'EUR'),
+            bookings: parseInt(t.bookings || 0)
+          }))
+        };
+
+    // Create response with headers
+    const response = NextResponse.json({ data });
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+
+    // Log response
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      report: 'sales_destinations',
+    });
+
+    return response;
+  } catch (error: any) {
+    // Log error
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'An unexpected error occurred while generating the report',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
-
 function calculateDateRange(period: string) {
   const now = new Date();
   let startDate: Date;

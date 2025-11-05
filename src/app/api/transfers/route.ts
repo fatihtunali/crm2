@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { parsePaginationParams, parseSortParams, buildPagedResponse } from '@/lib/pagination';
-import { createdResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
+import { parseStandardPaginationParams, buildStandardListResponse } from '@/lib/pagination';
+import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
+import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
 import { toMinorUnits, fromMinorUnits } from '@/lib/money';
 import type { PagedResponse } from '@/types/api';
 
@@ -41,18 +44,34 @@ interface TransferResponse extends Omit<Transfer, 'price_oneway' | 'price_roundt
 
 // GET - Fetch all intercity transfers with filters, pagination, and search
 export async function GET(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const authResult = await requirePermission(request, 'providers', 'read');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { user, tenantId } = authResult;
+
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 100, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const { searchParams } = new URL(request.url);
 
     // Parse pagination parameters
-    const { page, pageSize, offset } = parsePaginationParams(searchParams);
+    const { page, pageSize, offset } = parseStandardPaginationParams(searchParams);
 
     // Default sort order
     const orderBy = 't.from_city ASC, t.to_city ASC, t.start_date DESC';
@@ -171,46 +190,76 @@ export async function GET(request: NextRequest) {
     }));
 
     // Build paged response
-    const response: PagedResponse<TransferResponse> = buildPagedResponse(
+    const baseUrl = new URL(request.url).origin + new URL(request.url).pathname;
+    const filters: Record<string, string> = {};
+    if (statusFilter && statusFilter !== 'all') filters.status = statusFilter;
+    if (fromCityFilter && fromCityFilter !== 'all') filters.from_city = fromCityFilter;
+    if (toCityFilter && toCityFilter !== 'all') filters.to_city = toCityFilter;
+    if (searchTerm) filters.search = searchTerm;
+
+    const responseData = buildStandardListResponse(
       transformedRows,
       total,
       page,
-      pageSize
+      pageSize,
+      baseUrl,
+      filters
     );
 
-    return NextResponse.json(response);
+    const response = NextResponse.json(responseData);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      total_results: total
+    });
+
+    return response;
   } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(internalServerErrorProblem('Failed to fetch transfers'));
+    console.error('Error fetching transfers:', error);
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Internal server error',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 
 // POST - Create new intercity transfer
 export async function POST(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const authResult = await requirePermission(request, 'providers', 'create');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { user, tenantId } = authResult;
+
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 50, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     // Check for idempotency key
     const idempotencyKey = request.headers.get('Idempotency-Key');
-
-    // If idempotency key is provided, check if we already processed this request
     if (idempotencyKey) {
-      const existing = await query(
-        'SELECT id FROM intercity_transfers WHERE idempotency_key = ?',
-        [idempotencyKey]
-      );
-
-      if ((existing as any[]).length > 0) {
-        const existingId = (existing as any)[0].id;
-        return createdResponse(
-          { id: existingId, message: 'Transfer already exists (idempotent)' },
-          `/api/transfers/${existingId}`
-        );
+      const cachedResponse = await checkIdempotencyKey(request, idempotencyKey);
+      if (cachedResponse) {
+        return cachedResponse;
       }
     }
 
@@ -272,25 +321,69 @@ export async function POST(request: NextRequest) {
 
     const insertId = (result as any).insertId;
 
-    return createdResponse(
-      { id: insertId },
-      `/api/transfers/${insertId}`
-    );
+    // Fetch created transfer
+    const [created] = await query(
+      'SELECT * FROM intercity_transfers WHERE id = ?',
+      [insertId]
+    ) as any[];
+
+    const response = NextResponse.json(created, {
+      status: 201,
+      headers: {
+        Location: `/api/transfers/${insertId}`
+      }
+    });
+
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+
+    if (idempotencyKey) {
+      storeIdempotencyKey(idempotencyKey, response);
+    }
+
+    logResponse(requestId, 201, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      transfer_id: insertId
+    });
+    return response;
   } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(internalServerErrorProblem('Failed to create transfer'));
+    console.error('Error creating transfer:', error);
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Internal server error',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 
 // PUT - Update existing intercity transfer
 export async function PUT(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const authResult = await requirePermission(request, 'providers', 'update');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { user, tenantId } = authResult;
+
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 50, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const body = await request.json();
     const {
@@ -310,12 +403,11 @@ export async function PUT(request: NextRequest) {
     } = body;
 
     if (!id) {
-      return errorResponse({
-        type: 'validation_error',
-        title: 'Validation Error',
-        status: 400,
-        detail: 'Transfer ID is required'
-      });
+      return validationErrorResponse(
+        'Validation failed',
+        [{ field: 'id', issue: 'required', message: 'Transfer ID is required' }],
+        requestId
+      );
     }
 
     // Verify transfer belongs to tenant
@@ -325,12 +417,13 @@ export async function PUT(request: NextRequest) {
     );
 
     if ((existing as any[]).length === 0) {
-      return errorResponse({
-        type: 'not_found',
-        title: 'Not Found',
-        status: 404,
-        detail: 'Transfer not found'
-      });
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        'Transfer not found',
+        404,
+        undefined,
+        requestId
+      );
     }
 
     // Update transfer
@@ -373,12 +466,24 @@ export async function PUT(request: NextRequest) {
       [id]
     ) as any[];
 
-    return NextResponse.json({
-      success: true,
-      data: updated
+    const response = NextResponse.json(updated);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      transfer_id: id
     });
+
+    return response;
   } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(internalServerErrorProblem('Failed to update transfer'));
+    console.error('Error updating transfer:', error);
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Internal server error',
+      500,
+      undefined,
+      requestId
+    );
   }
 }

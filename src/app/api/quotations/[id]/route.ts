@@ -4,10 +4,14 @@ import type { Money } from '@/types/api';
 import {
   standardErrorResponse,
   notFoundErrorResponse,
-  ErrorCodes
+  validationErrorResponse,
+  ErrorCodes,
+  addStandardHeaders
 } from '@/lib/response';
-import { getRequestId, logResponse } from '@/middleware/correlation';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
 import { requirePermission } from '@/middleware/permissions';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
+import { auditLog, AuditActions, AuditResources } from '@/middleware/audit';
 
 /**
  * Convert a decimal string price to Money type
@@ -42,6 +46,24 @@ export async function GET(
       return authResult.error;
     }
     const { user, tenantId } = authResult;
+
+    // Rate limiting (100 requests per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}`,
+      100,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const { id } = await params;
 
@@ -122,12 +144,15 @@ export async function GET(
     }
 
     logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
       quotation_id: id,
       days_count: days.length,
     });
 
     const response = NextResponse.json(responseQuote);
-    response.headers.set('X-Request-Id', requestId);
+    addStandardHeaders(response, requestId);
+    addRateLimitHeaders(response, rateLimit);
     return response;
   } catch (error: any) {
     logResponse(requestId, 500, Date.now() - startTime, {
@@ -159,16 +184,40 @@ export async function PATCH(
     }
     const { user, tenantId } = authResult;
 
+    // Rate limiting (50 requests per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_update`,
+      50,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Update rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
+
     const { id } = await params;
 
-    // Check if quote exists
+    // Check if quote exists and belongs to user's organization
     const [existingQuote] = await query(
-      'SELECT * FROM quotes WHERE id = ?',
-      [id]
+      'SELECT * FROM quotes WHERE id = ? AND organization_id = ?',
+      [id, parseInt(tenantId)]
     ) as any[];
 
     if (!existingQuote) {
-      return notFoundErrorResponse(`Quote ${id} not found`, requestId);
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        'Quotation not found',
+        404,
+        undefined,
+        requestId
+      );
     }
 
     const body = await request.json();
@@ -218,21 +267,25 @@ export async function PATCH(
     // If no fields to update, return current quote
     if (updateFields.length === 0) {
       logResponse(requestId, 200, Date.now() - startTime, {
+        user_id: user.userId,
+        tenant_id: tenantId,
         quotation_id: id,
         no_updates: true,
       });
 
       const response = NextResponse.json(existingQuote);
-      response.headers.set('X-Request-Id', requestId);
+      addStandardHeaders(response, requestId);
+      addRateLimitHeaders(response, rateLimit);
       return response;
     }
 
-    // Add id to the end of params
+    // Add id and organization_id to the end of params
     updateValues.push(id);
+    updateValues.push(parseInt(tenantId));
 
-    // Execute update
+    // Execute update (SECURITY: Only update if belongs to user's organization)
     await query(
-      `UPDATE quotes SET ${updateFields.join(', ')} WHERE id = ?`,
+      `UPDATE quotes SET ${updateFields.join(', ')} WHERE id = ? AND organization_id = ?`,
       updateValues
     );
 
@@ -250,13 +303,38 @@ export async function PATCH(
       );
     }
 
+    // AUDIT: Log quotation update with changes
+    const changes: Record<string, any> = {};
+    for (const field of allowedFields) {
+      if (body.hasOwnProperty(field) && body[field] !== existingQuote[field]) {
+        changes[field] = body[field];
+      }
+    }
+
+    await auditLog(
+      parseInt(tenantId),
+      user.userId,
+      AuditActions.QUOTATION_UPDATED,
+      AuditResources.QUOTATION,
+      id.toString(),
+      changes,
+      {
+        quote_number: existingQuote.quote_number,
+        fields_updated: Object.keys(changes),
+      },
+      request
+    );
+
     logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
       quotation_id: id,
       fields_updated: updateFields.length,
     });
 
     const response = NextResponse.json(updatedQuote);
-    response.headers.set('X-Request-Id', requestId);
+    addStandardHeaders(response, requestId);
+    addRateLimitHeaders(response, rateLimit);
     return response;
   } catch (error: any) {
     logResponse(requestId, 500, Date.now() - startTime, {
@@ -292,33 +370,76 @@ export async function DELETE(
 
     const { user, tenantId } = authResult;
 
+    // Rate limiting (20 requests per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_delete`,
+      20,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Delete rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
+
     // Check if quote exists and belongs to user's organization
     const [existingQuote] = await query(
       'SELECT * FROM quotes WHERE id = ? AND organization_id = ?',
-      [id, tenantId]
+      [id, parseInt(tenantId)]
     ) as any[];
 
     if (!existingQuote) {
-      return notFoundErrorResponse(`Quote ${id} not found`, requestId);
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        'Quotation not found',
+        404,
+        undefined,
+        requestId
+      );
     }
 
     // Delete the quote (cascading deletes will handle quote_days and quote_expenses)
     await query('DELETE FROM quotes WHERE id = ? AND organization_id = ?', [
       id,
-      tenantId,
+      parseInt(tenantId),
     ]);
 
+    // AUDIT: Log quotation deletion
+    await auditLog(
+      parseInt(tenantId),
+      user.userId,
+      AuditActions.QUOTATION_DELETED,
+      AuditResources.QUOTATION,
+      id.toString(),
+      {
+        deletion_type: 'hard_delete',
+      },
+      {
+        quote_number: existingQuote.quote_number,
+        customer_name: existingQuote.customer_name,
+      },
+      request
+    );
+
     logResponse(requestId, 204, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
       quotation_id: id,
       deleted_by: user.userId,
     });
 
-    return new NextResponse(null, {
+    const response = new NextResponse(null, {
       status: 204,
-      headers: {
-        'X-Request-Id': requestId,
-      },
     });
+    addStandardHeaders(response, requestId);
+    addRateLimitHeaders(response, rateLimit);
+    return response;
   } catch (error: any) {
     logResponse(requestId, 500, Date.now() - startTime, {
       error: error.message,

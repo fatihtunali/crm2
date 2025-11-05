@@ -1,7 +1,10 @@
+import { NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { parsePaginationParams, parseSortParams, buildPagedResponse } from '@/lib/pagination';
-import { successResponse, errorResponse, badRequestProblem, internalServerErrorProblem } from '@/lib/response';
+import { parseStandardPaginationParams, buildStandardListResponse } from '@/lib/pagination';
+import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 
 /**
  * Supplier type discriminator for federated search results
@@ -31,6 +34,9 @@ interface SupplierSearchResult {
 
 // GET - Federated search across all supplier types
 export async function GET(request: Request) {
+  const requestId = getRequestId(request as any);
+  const startTime = Date.now();
+
   try {
     // Validate tenant
     const authResult = await requirePermission(request as any, 'providers', 'read');
@@ -39,22 +45,29 @@ export async function GET(request: Request) {
     }
     const { tenantId, user } = authResult;
 
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 100, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
+
     const { searchParams } = new URL(request.url);
 
     // Parse pagination parameters
-    const { page, pageSize, offset } = parsePaginationParams(searchParams);
+    const { page, pageSize, offset } = parseStandardPaginationParams(searchParams);
 
     // Get search filters
     const typeFilter = searchParams.get('type') as SupplierType | null;
     const location = searchParams.get('location') || '';
     const searchTerm = searchParams.get('search') || '';
     const date = searchParams.get('date');
-
-    // Get sorting
-    const sortParam = searchParams.get('sort');
-    // SECURITY: Whitelist allowed columns to prevent SQL injection
-    const ALLOWED_COLUMNS = ['id', 'name', 'location', 'supplier_type', 'price', 'currency'];
-    const sortClause = parseSortParams(sortParam || 'name', ALLOWED_COLUMNS);
 
     // Validate type filter if provided
     const validTypes: SupplierType[] = [
@@ -63,11 +76,10 @@ export async function GET(request: Request) {
     ];
 
     if (typeFilter && !validTypes.includes(typeFilter)) {
-      return errorResponse(
-        badRequestProblem(
-          `Invalid type filter. Must be one of: ${validTypes.join(', ')}`,
-          '/api/suppliers/search'
-        )
+      return validationErrorResponse(
+        'Invalid input',
+        [{ field: 'type', issue: 'invalid', message: `Invalid type filter. Must be one of: ${validTypes.join(', ')}` }],
+        requestId
       );
     }
 
@@ -308,7 +320,7 @@ export async function GET(request: Request) {
     // Wrap in subquery for sorting and pagination
     const finalQuery = `
       SELECT * FROM (${unionQuery}) as suppliers
-      ${sortClause ? `ORDER BY ${sortClause}` : 'ORDER BY name ASC'}
+      ORDER BY name ASC
       LIMIT ? OFFSET ?
     `;
 
@@ -327,21 +339,40 @@ export async function GET(request: Request) {
     const total = (countResult as any)[0].total;
 
     // Build paged response
-    const pagedResponse = buildPagedResponse(
+    const baseUrl = new URL(request.url).origin + new URL(request.url).pathname;
+    const filters: Record<string, string> = {};
+    if (typeFilter) filters.type = typeFilter;
+    if (location) filters.location = location;
+    if (searchTerm) filters.search = searchTerm;
+    if (date) filters.date = date;
+
+    const responseData = buildStandardListResponse(
       results as SupplierSearchResult[],
       total,
       page,
-      pageSize
+      pageSize,
+      baseUrl,
+      filters
     );
 
-    return successResponse(pagedResponse);
+    const response = NextResponse.json(responseData);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      total_results: total
+    });
+
+    return response;
   } catch (error) {
     console.error('Supplier search error:', error);
-    return errorResponse(
-      internalServerErrorProblem(
-        'Failed to search suppliers',
-        '/api/suppliers/search'
-      )
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Failed to search suppliers',
+      500,
+      undefined,
+      requestId
     );
   }
 }

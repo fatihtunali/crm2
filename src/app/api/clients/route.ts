@@ -2,9 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { parseStandardPaginationParams, buildStandardListResponse, parseSortParams } from '@/lib/pagination';
 import { buildWhereClause, buildSearchClause, combineWhereAndSearch } from '@/lib/query-builder';
-import { standardErrorResponse, validationErrorResponse, ErrorCodes } from '@/lib/response';
+import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
-import { getRequestId, logResponse } from '@/middleware/correlation';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 
 /**
  * GET /api/clients
@@ -21,6 +22,24 @@ export async function GET(request: NextRequest) {
       return authResult.error;
     }
     const { tenantId, user } = authResult;
+
+    // Rate limiting (100 requests per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}`,
+      100,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const { searchParams } = new URL(request.url);
 
@@ -143,10 +162,14 @@ export async function GET(request: NextRequest) {
       user_id: user.userId,
       tenant_id: tenantId,
       results_count: (rows as any[]).length,
+      total_results: total,
+      page,
+      page_size: pageSize,
     });
 
     const response = NextResponse.json(responseData);
-    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
     return response;
   } catch (error: any) {
     logResponse(requestId, 500, Date.now() - startTime, {
@@ -178,6 +201,24 @@ export async function POST(request: NextRequest) {
       return authResult.error;
     }
     const { tenantId, user } = authResult;
+
+    // Rate limiting (50 creates per hour per user)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_create`,
+      50,
+      3600
+    );
+
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Creation rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const body = await request.json();
 
@@ -251,8 +292,14 @@ export async function POST(request: NextRequest) {
       client_id: clientId,
     });
 
-    const response = NextResponse.json(client, { status: 201 });
-    response.headers.set('X-Request-Id', requestId);
+    const response = NextResponse.json(client, {
+      status: 201,
+      headers: {
+        'Location': `/api/clients/${clientId}`,
+      },
+    });
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
     return response;
   } catch (error: any) {
     logResponse(requestId, error.code === 'ER_DUP_ENTRY' ? 409 : 500, Date.now() - startTime, {

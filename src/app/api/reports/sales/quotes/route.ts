@@ -1,235 +1,293 @@
-import { NextRequest } from 'next/server';
+/**
+ * Sales Quotes Report API Endpoint - PHASE 1 STANDARDS APPLIED
+ * Demonstrates Phase 1 standards:
+ * - Request correlation IDs (X-Request-Id)
+ * - Standardized error responses with error codes
+ * - Rate limiting (100 requests/hour for reports)
+ * - Request/response logging
+ * - Standard headers
+ *
+ * GET /api/reports/sales/quotes - Get sales quotes report
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { successResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
+import { standardErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import { createMoney } from '@/lib/money';
 
 export async function GET(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
-    // Require tenant
+    // 1. Authenticate and get tenant
     const authResult = await requirePermission(request, 'reports', 'read');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
-    // Parse query parameters
-    const { searchParams } = new URL(request.url);
-    const period = searchParams.get('period') || 'last_30_days';
-    const { startDate, endDate } = calculateDateRange(period);
+    // 2. Rate limiting (100 requests per hour per user for read-only reports)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_reports`,
+      100,
+      3600
+    );
 
-    // Quotes by status
-    const quotesByStatus = await query(`
-      SELECT
-        status,
-        COUNT(*) as count,
-        SUM(total_price) as total_value,
-        AVG(total_price) as avg_value
-      FROM quotes
-      WHERE organization_id = ?
-      AND created_at BETWEEN ? AND ?
-      GROUP BY status
-      ORDER BY
-        CASE status
-          WHEN 'accepted' THEN 1
-          WHEN 'sent' THEN 2
-          WHEN 'draft' THEN 3
-          WHEN 'rejected' THEN 4
-          WHEN 'expired' THEN 5
-        END
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
-    // Conversion funnel with time metrics
-    const [funnelResult] = await query(`
-      SELECT
-        COUNT(*) as total_quotes,
-        COUNT(CASE WHEN status = 'draft' THEN 1 END) as draft,
-        COUNT(CASE WHEN status IN ('sent', 'accepted', 'rejected', 'expired') THEN 1 END) as sent,
-        COUNT(CASE WHEN status = 'accepted' THEN 1 END) as accepted,
-        COUNT(CASE WHEN status = 'rejected' THEN 1 END) as rejected,
-        COUNT(CASE WHEN status = 'expired' THEN 1 END) as expired,
-        AVG(CASE
-          WHEN status = 'accepted' AND sent_at IS NOT NULL
-          THEN TIMESTAMPDIFF(HOUR, sent_at, updated_at)
-        END) as avg_hours_to_acceptance,
-        AVG(CASE
-          WHEN status = 'rejected' AND sent_at IS NOT NULL
-          THEN TIMESTAMPDIFF(HOUR, sent_at, updated_at)
-        END) as avg_hours_to_rejection
-      FROM quotes
-      WHERE organization_id = ?
-      AND created_at BETWEEN ? AND ?
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+// Require tenant
+        // Parse query parameters
+        const { searchParams } = new URL(request.url);
+        const period = searchParams.get('period') || 'last_30_days';
+        const { startDate, endDate } = calculateDateRange(period);
 
-    const totalQuotes = parseInt(funnelResult?.total_quotes || 0);
-    const sent = parseInt(funnelResult?.sent || 0);
-    const accepted = parseInt(funnelResult?.accepted || 0);
-    const rejected = parseInt(funnelResult?.rejected || 0);
+        // Quotes by status
+        const quotesByStatus = await query(`
+          SELECT
+            status,
+            COUNT(*) as count,
+            SUM(total_price) as total_value,
+            AVG(total_price) as avg_value
+          FROM quotes
+          WHERE organization_id = ?
+          AND created_at BETWEEN ? AND ?
+          GROUP BY status
+          ORDER BY
+            CASE status
+              WHEN 'accepted' THEN 1
+              WHEN 'sent' THEN 2
+              WHEN 'draft' THEN 3
+              WHEN 'rejected' THEN 4
+              WHEN 'expired' THEN 5
+            END
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    const conversionRate = sent > 0 ? (accepted / sent) * 100 : 0;
-    const rejectionRate = sent > 0 ? (rejected / sent) * 100 : 0;
+        // Conversion funnel with time metrics
+        const [funnelResult] = await query(`
+          SELECT
+            COUNT(*) as total_quotes,
+            COUNT(CASE WHEN status = 'draft' THEN 1 END) as draft,
+            COUNT(CASE WHEN status IN ('sent', 'accepted', 'rejected', 'expired') THEN 1 END) as sent,
+            COUNT(CASE WHEN status = 'accepted' THEN 1 END) as accepted,
+            COUNT(CASE WHEN status = 'rejected' THEN 1 END) as rejected,
+            COUNT(CASE WHEN status = 'expired' THEN 1 END) as expired,
+            AVG(CASE
+              WHEN status = 'accepted' AND sent_at IS NOT NULL
+              THEN TIMESTAMPDIFF(HOUR, sent_at, updated_at)
+            END) as avg_hours_to_acceptance,
+            AVG(CASE
+              WHEN status = 'rejected' AND sent_at IS NOT NULL
+              THEN TIMESTAMPDIFF(HOUR, sent_at, updated_at)
+            END) as avg_hours_to_rejection
+          FROM quotes
+          WHERE organization_id = ?
+          AND created_at BETWEEN ? AND ?
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    // Quote value distribution (buckets)
-    const valueDistribution = await query(`
-      SELECT
-        CASE
-          WHEN total_price < 1000 THEN 'Under €1,000'
-          WHEN total_price BETWEEN 1000 AND 2499 THEN '€1,000 - €2,499'
-          WHEN total_price BETWEEN 2500 AND 4999 THEN '€2,500 - €4,999'
-          WHEN total_price BETWEEN 5000 AND 9999 THEN '€5,000 - €9,999'
-          ELSE '€10,000+'
-        END as value_range,
-        COUNT(*) as count,
-        AVG(total_price) as avg_value
-      FROM quotes
-      WHERE organization_id = ?
-      AND created_at BETWEEN ? AND ?
-      AND total_price IS NOT NULL
-      GROUP BY value_range
-      ORDER BY MIN(total_price)
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+        const totalQuotes = parseInt(funnelResult?.total_quotes || 0);
+        const sent = parseInt(funnelResult?.sent || 0);
+        const accepted = parseInt(funnelResult?.accepted || 0);
+        const rejected = parseInt(funnelResult?.rejected || 0);
 
-    // Conversion rate by category
-    const conversionByCategory = await query(`
-      SELECT
-        category,
-        COUNT(*) as total,
-        COUNT(CASE WHEN status = 'accepted' THEN 1 END) as accepted,
-        COUNT(CASE WHEN status IN ('sent', 'accepted', 'rejected') THEN 1 END) as sent,
-        AVG(total_price) as avg_value
-      FROM quotes
-      WHERE organization_id = ?
-      AND created_at BETWEEN ? AND ?
-      AND category IS NOT NULL
-      GROUP BY category
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+        const conversionRate = sent > 0 ? (accepted / sent) * 100 : 0;
+        const rejectionRate = sent > 0 ? (rejected / sent) * 100 : 0;
 
-    // Conversion rate by destination
-    const conversionByDestination = await query(`
-      SELECT
-        destination,
-        COUNT(*) as total,
-        COUNT(CASE WHEN status = 'accepted' THEN 1 END) as accepted,
-        COUNT(CASE WHEN status IN ('sent', 'accepted', 'rejected') THEN 1 END) as sent,
-        AVG(total_price) as avg_value
-      FROM quotes
-      WHERE organization_id = ?
-      AND created_at BETWEEN ? AND ?
-      AND destination IS NOT NULL
-      GROUP BY destination
-      ORDER BY total DESC
-      LIMIT 10
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+        // Quote value distribution (buckets)
+        const valueDistribution = await query(`
+          SELECT
+            CASE
+              WHEN total_price < 1000 THEN 'Under €1,000'
+              WHEN total_price BETWEEN 1000 AND 2499 THEN '€1,000 - €2,499'
+              WHEN total_price BETWEEN 2500 AND 4999 THEN '€2,500 - €4,999'
+              WHEN total_price BETWEEN 5000 AND 9999 THEN '€5,000 - €9,999'
+              ELSE '€10,000+'
+            END as value_range,
+            COUNT(*) as count,
+            AVG(total_price) as avg_value
+          FROM quotes
+          WHERE organization_id = ?
+          AND created_at BETWEEN ? AND ?
+          AND total_price IS NOT NULL
+          GROUP BY value_range
+          ORDER BY MIN(total_price)
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    // Response time analysis
-    const [responseTimeResult] = await query(`
-      SELECT
-        AVG(TIMESTAMPDIFF(HOUR, created_at, sent_at)) as avg_time_to_send,
-        MIN(TIMESTAMPDIFF(HOUR, created_at, sent_at)) as min_time_to_send,
-        MAX(TIMESTAMPDIFF(HOUR, created_at, sent_at)) as max_time_to_send
-      FROM quotes
-      WHERE organization_id = ?
-      AND created_at BETWEEN ? AND ?
-      AND sent_at IS NOT NULL
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+        // Conversion rate by category
+        const conversionByCategory = await query(`
+          SELECT
+            category,
+            COUNT(*) as total,
+            COUNT(CASE WHEN status = 'accepted' THEN 1 END) as accepted,
+            COUNT(CASE WHEN status IN ('sent', 'accepted', 'rejected') THEN 1 END) as sent,
+            AVG(total_price) as avg_value
+          FROM quotes
+          WHERE organization_id = ?
+          AND created_at BETWEEN ? AND ?
+          AND category IS NOT NULL
+          GROUP BY category
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    // Top performing quotes
-    const topQuotes = await query(`
-      SELECT
-        id,
-        quote_number,
-        customer_name,
-        destination,
-        total_price,
-        status,
-        created_at,
-        sent_at
-      FROM quotes
-      WHERE organization_id = ?
-      AND status = 'accepted'
-      AND start_date BETWEEN ? AND ?
-      ORDER BY total_price DESC
-      LIMIT 10
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+        // Conversion rate by destination
+        const conversionByDestination = await query(`
+          SELECT
+            destination,
+            COUNT(*) as total,
+            COUNT(CASE WHEN status = 'accepted' THEN 1 END) as accepted,
+            COUNT(CASE WHEN status IN ('sent', 'accepted', 'rejected') THEN 1 END) as sent,
+            AVG(total_price) as avg_value
+          FROM quotes
+          WHERE organization_id = ?
+          AND created_at BETWEEN ? AND ?
+          AND destination IS NOT NULL
+          GROUP BY destination
+          ORDER BY total DESC
+          LIMIT 10
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    // Format response
-    const data = {
-      period: {
-        start_date: startDate,
-        end_date: endDate
-      },
-      summary: {
-        totalQuotes: totalQuotes,
-        conversionRate: Math.round(conversionRate * 100) / 100,
-        rejectionRate: Math.round(rejectionRate * 100) / 100,
-        avgTimeToAcceptance: Math.round(parseFloat(funnelResult?.avg_hours_to_acceptance || 0)),
-        avgTimeToRejection: Math.round(parseFloat(funnelResult?.avg_hours_to_rejection || 0)),
-        avgTimeToSend: Math.round(parseFloat(responseTimeResult?.avg_time_to_send || 0))
-      },
-      byStatus: quotesByStatus.map((s: any) => ({
-        status: s.status,
-        count: parseInt(s.count || 0),
-        totalValue: createMoney(parseFloat(s.total_value || 0), 'EUR'),
-        avgValue: createMoney(parseFloat(s.avg_value || 0), 'EUR')
-      })),
-      conversionFunnel: {
-        draft: parseInt(funnelResult?.draft || 0),
-        sent: sent,
-        accepted: accepted,
-        rejected: rejected,
-        expired: parseInt(funnelResult?.expired || 0),
-        draftToSentRate: totalQuotes > 0 ? Math.round((sent / totalQuotes) * 100 * 100) / 100 : 0,
-        sentToAcceptedRate: conversionRate,
-        sentToRejectedRate: rejectionRate
-      },
-      valueDistribution: valueDistribution.map((v: any) => ({
-        range: v.value_range,
-        count: parseInt(v.count || 0),
-        avgValue: createMoney(parseFloat(v.avg_value || 0), 'EUR')
-      })),
-      conversionByCategory: conversionByCategory.map((c: any) => {
-        const catSent = parseInt(c.sent || 0);
-        const catAccepted = parseInt(c.accepted || 0);
-        return {
-          category: c.category,
-          total: parseInt(c.total || 0),
-          accepted: catAccepted,
-          sent: catSent,
-          conversionRate: catSent > 0 ? Math.round((catAccepted / catSent) * 100 * 100) / 100 : 0,
-          avgValue: createMoney(parseFloat(c.avg_value || 0), 'EUR')
+        // Response time analysis
+        const [responseTimeResult] = await query(`
+          SELECT
+            AVG(TIMESTAMPDIFF(HOUR, created_at, sent_at)) as avg_time_to_send,
+            MIN(TIMESTAMPDIFF(HOUR, created_at, sent_at)) as min_time_to_send,
+            MAX(TIMESTAMPDIFF(HOUR, created_at, sent_at)) as max_time_to_send
+          FROM quotes
+          WHERE organization_id = ?
+          AND created_at BETWEEN ? AND ?
+          AND sent_at IS NOT NULL
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
+
+        // Top performing quotes
+        const topQuotes = await query(`
+          SELECT
+            id,
+            quote_number,
+            customer_name,
+            destination,
+            total_price,
+            status,
+            created_at,
+            sent_at
+          FROM quotes
+          WHERE organization_id = ?
+          AND status = 'accepted'
+          AND start_date BETWEEN ? AND ?
+          ORDER BY total_price DESC
+          LIMIT 10
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
+
+        // Format response
+        const data = {
+          period: {
+            start_date: startDate,
+            end_date: endDate
+          },
+          summary: {
+            totalQuotes: totalQuotes,
+            conversionRate: Math.round(conversionRate * 100) / 100,
+            rejectionRate: Math.round(rejectionRate * 100) / 100,
+            avgTimeToAcceptance: Math.round(parseFloat(funnelResult?.avg_hours_to_acceptance || 0)),
+            avgTimeToRejection: Math.round(parseFloat(funnelResult?.avg_hours_to_rejection || 0)),
+            avgTimeToSend: Math.round(parseFloat(responseTimeResult?.avg_time_to_send || 0))
+          },
+          byStatus: quotesByStatus.map((s: any) => ({
+            status: s.status,
+            count: parseInt(s.count || 0),
+            totalValue: createMoney(parseFloat(s.total_value || 0), 'EUR'),
+            avgValue: createMoney(parseFloat(s.avg_value || 0), 'EUR')
+          })),
+          conversionFunnel: {
+            draft: parseInt(funnelResult?.draft || 0),
+            sent: sent,
+            accepted: accepted,
+            rejected: rejected,
+            expired: parseInt(funnelResult?.expired || 0),
+            draftToSentRate: totalQuotes > 0 ? Math.round((sent / totalQuotes) * 100 * 100) / 100 : 0,
+            sentToAcceptedRate: conversionRate,
+            sentToRejectedRate: rejectionRate
+          },
+          valueDistribution: valueDistribution.map((v: any) => ({
+            range: v.value_range,
+            count: parseInt(v.count || 0),
+            avgValue: createMoney(parseFloat(v.avg_value || 0), 'EUR')
+          })),
+          conversionByCategory: conversionByCategory.map((c: any) => {
+            const catSent = parseInt(c.sent || 0);
+            const catAccepted = parseInt(c.accepted || 0);
+            return {
+              category: c.category,
+              total: parseInt(c.total || 0),
+              accepted: catAccepted,
+              sent: catSent,
+              conversionRate: catSent > 0 ? Math.round((catAccepted / catSent) * 100 * 100) / 100 : 0,
+              avgValue: createMoney(parseFloat(c.avg_value || 0), 'EUR')
+            };
+          }),
+          conversionByDestination: conversionByDestination.map((d: any) => {
+            const destSent = parseInt(d.sent || 0);
+            const destAccepted = parseInt(d.accepted || 0);
+            return {
+              destination: d.destination,
+              total: parseInt(d.total || 0),
+              accepted: destAccepted,
+              sent: destSent,
+              conversionRate: destSent > 0 ? Math.round((destAccepted / destSent) * 100 * 100) / 100 : 0,
+              avgValue: createMoney(parseFloat(d.avg_value || 0), 'EUR')
+            };
+          }),
+          topQuotes: topQuotes.map((q: any) => ({
+            id: q.id,
+            quoteNumber: q.quote_number,
+            customerName: q.customer_name,
+            destination: q.destination,
+            value: createMoney(parseFloat(q.total_price || 0), 'EUR'),
+            status: q.status,
+            createdAt: q.created_at,
+            sentAt: q.sent_at
+          }))
         };
-      }),
-      conversionByDestination: conversionByDestination.map((d: any) => {
-        const destSent = parseInt(d.sent || 0);
-        const destAccepted = parseInt(d.accepted || 0);
-        return {
-          destination: d.destination,
-          total: parseInt(d.total || 0),
-          accepted: destAccepted,
-          sent: destSent,
-          conversionRate: destSent > 0 ? Math.round((destAccepted / destSent) * 100 * 100) / 100 : 0,
-          avgValue: createMoney(parseFloat(d.avg_value || 0), 'EUR')
-        };
-      }),
-      topQuotes: topQuotes.map((q: any) => ({
-        id: q.id,
-        quoteNumber: q.quote_number,
-        customerName: q.customer_name,
-        destination: q.destination,
-        value: createMoney(parseFloat(q.total_price || 0), 'EUR'),
-        status: q.status,
-        createdAt: q.created_at,
-        sentAt: q.sent_at
-      }))
-    };
 
-    return successResponse(data);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(internalServerErrorProblem(request.url));
+    // Create response with headers
+    const response = NextResponse.json({ data });
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+
+    // Log response
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      report: 'sales_quotes',
+    });
+
+    return response;
+  } catch (error: any) {
+    // Log error
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
+
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'An unexpected error occurred while generating the report',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
-
 function calculateDateRange(period: string) {
   const now = new Date();
   let startDate: Date;

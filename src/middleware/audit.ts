@@ -206,6 +206,21 @@ export const AuditActions = {
 
   // Export actions
   DATA_EXPORTED: 'data.exported',
+
+  // Admin actions
+  ADMIN_ACTION: 'admin.action',
+  ADMIN_CLEANUP: 'admin.cleanup',
+  ADMIN_MIGRATION: 'admin.migration',
+
+  // Provider actions
+  PROVIDER_CREATED: 'provider.created',
+  PROVIDER_UPDATED: 'provider.updated',
+  PROVIDER_DELETED: 'provider.deleted',
+
+  // Request actions
+  REQUEST_CREATED: 'request.created',
+  REQUEST_UPDATED: 'request.updated',
+  REQUEST_DELETED: 'request.deleted',
 } as const;
 
 /**
@@ -220,4 +235,15 @@ export const AuditResources = {
   ROLE: 'role',
   SETTINGS: 'settings',
   REPORT: 'report',
+  TOUR: 'tour',
+  ADMIN: 'admin',
+  PROVIDER: 'provider',
+  REQUEST: 'request',
+  HOTEL: 'hotel',
+  GUIDE: 'guide',
+  VEHICLE: 'vehicle',
+  RESTAURANT: 'restaurant',
+  TRANSFER: 'transfer',
+  ENTRANCE_FEE: 'entrance_fee',
+  SUPPLIER: 'supplier',
 } as const;

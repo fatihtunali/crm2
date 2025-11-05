@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { parsePaginationParams, buildPagedResponse } from '@/lib/pagination';
-import { createdResponse, errorResponse, badRequestProblem, internalServerErrorProblem, successResponse } from '@/lib/response';
+import { parseStandardPaginationParams, buildStandardListResponse } from '@/lib/pagination';
+import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
 import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
-import { handleError } from '@/middleware/errorHandler';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import type { PagedResponse } from '@/types/api';
 
 interface Vehicle {
@@ -47,18 +48,34 @@ interface Vehicle {
  * - X-Tenant-Id: Required tenant identifier
  */
 export async function GET(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const authResult = await requirePermission(request, 'providers', 'read');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { user, tenantId } = authResult;
+
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 100, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const { searchParams } = new URL(request.url);
 
     // Parse pagination
-    const { page, pageSize, offset } = parsePaginationParams(searchParams);
+    const { page, pageSize, offset } = parseStandardPaginationParams(searchParams);
 
     // Build WHERE conditions manually with table qualifiers
     const whereConditions: string[] = [];
@@ -178,16 +195,41 @@ export async function GET(request: NextRequest) {
     const total = (countResult as any)[0].total;
 
     // Build paged response
-    const response: PagedResponse<Vehicle> = buildPagedResponse(
+    const baseUrl = new URL(request.url).origin + new URL(request.url).pathname;
+    const filters: Record<string, string> = {};
+    if (status && status !== 'all') filters.status = status;
+    if (city && city !== 'all') filters.city = city;
+    if (vehicleType && vehicleType !== 'all') filters.vehicle_type = vehicleType;
+    if (searchTerm) filters.search = searchTerm;
+
+    const responseData = buildStandardListResponse(
       rows as Vehicle[],
       total,
       page,
-      pageSize
+      pageSize,
+      baseUrl,
+      filters
     );
 
-    return NextResponse.json(response);
+    const response = NextResponse.json(responseData);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      total_results: total
+    });
+
+    return response;
   } catch (error) {
-    return handleError(error, request.url);
+    console.error('Error fetching vehicles:', error);
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Internal server error',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 
@@ -208,13 +250,29 @@ export async function GET(request: NextRequest) {
  * - status: string (optional, defaults to 'active')
  */
 export async function POST(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const authResult = await requirePermission(request, 'providers', 'create');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { user, tenantId } = authResult;
+
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 50, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     // Check idempotency key
     const idempotencyKey = request.headers.get('Idempotency-Key');
@@ -238,20 +296,21 @@ export async function POST(request: NextRequest) {
 
     // Validate required fields
     if (!vehicle_type || !city) {
-      return errorResponse(
-        badRequestProblem(
-          'Missing required fields: vehicle_type and city are required',
-          request.url
-        )
+      return validationErrorResponse(
+        'Required fields missing',
+        [
+          { field: 'vehicle_type', issue: 'required', message: 'vehicle_type is required' },
+          { field: 'city', issue: 'required', message: 'city is required' }
+        ],
+        requestId
       );
     }
 
     if (!max_capacity || typeof max_capacity !== 'number' || max_capacity <= 0) {
-      return errorResponse(
-        badRequestProblem(
-          'Invalid max_capacity: must be a positive number',
-          request.url
-        )
+      return validationErrorResponse(
+        'Invalid input',
+        [{ field: 'max_capacity', issue: 'invalid', message: 'max_capacity must be a positive number' }],
+        requestId
       );
     }
 
@@ -280,38 +339,73 @@ export async function POST(request: NextRequest) {
     ) as Vehicle[];
 
     // Create response
-    const response = createdResponse(
-      createdVehicle,
-      `/api/vehicles/${insertId}`
-    );
+    const response = NextResponse.json(createdVehicle, {
+      status: 201,
+      headers: {
+        Location: `/api/vehicles/${insertId}`
+      }
+    });
+
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
 
     // Store idempotency key if provided
     if (idempotencyKey) {
       storeIdempotencyKey(idempotencyKey, response);
     }
 
+    logResponse(requestId, 201, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      vehicle_id: insertId
+    });
     return response;
   } catch (error) {
-    return handleError(error, request.url);
+    console.error('Error creating vehicle:', error);
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Internal server error',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 
 // PUT - Update vehicle
 export async function PUT(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const authResult = await requirePermission(request, 'providers', 'update');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { user, tenantId } = authResult;
+
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 50, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const body = await request.json();
     const { id } = body;
 
     if (!id) {
-      return errorResponse(
-        badRequestProblem('Vehicle ID is required', request.url)
+      return validationErrorResponse(
+        'Validation failed',
+        [{ field: 'id', issue: 'required', message: 'Vehicle ID is required' }],
+        requestId
       );
     }
 
@@ -322,13 +416,13 @@ export async function PUT(request: NextRequest) {
     ) as any[];
 
     if (!existingVehicle) {
-      return errorResponse({
-        type: 'https://httpstatuses.com/404',
-        title: 'Not Found',
-        status: 404,
-        detail: `Vehicle with ID ${id} not found or does not belong to your organization`,
-        instance: request.url,
-      });
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        `Vehicle with ID ${id} not found or does not belong to your organization`,
+        404,
+        undefined,
+        requestId
+      );
     }
 
     // Update the vehicle
@@ -360,8 +454,24 @@ export async function PUT(request: NextRequest) {
       [id]
     ) as Vehicle[];
 
-    return successResponse(updatedVehicle);
+    const response = NextResponse.json(updatedVehicle);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      vehicle_id: id
+    });
+
+    return response;
   } catch (error) {
-    return handleError(error, request.url);
+    console.error('Error updating vehicle:', error);
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Internal server error',
+      500,
+      undefined,
+      requestId
+    );
   }
 }

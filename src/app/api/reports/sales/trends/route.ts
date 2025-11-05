@@ -1,144 +1,202 @@
-import { NextRequest } from 'next/server';
+/**
+ * Sales Trends Report API Endpoint - PHASE 1 STANDARDS APPLIED
+ * Demonstrates Phase 1 standards:
+ * - Request correlation IDs (X-Request-Id)
+ * - Standardized error responses with error codes
+ * - Rate limiting (100 requests/hour for reports)
+ * - Request/response logging
+ * - Standard headers
+ *
+ * GET /api/reports/sales/trends - Get sales trends report
+ */
+
+import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { successResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
+import { standardErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import { createMoney } from '@/lib/money';
 
 export async function GET(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
+    // 1. Authenticate and get tenant
     const authResult = await requirePermission(request, 'reports', 'read');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { tenantId, user } = authResult;
 
-    const { searchParams } = new URL(request.url);
-    const period = searchParams.get('period') || 'this_year';
-    const { startDate, endDate } = calculateDateRange(period);
+    // 2. Rate limiting (100 requests per hour per user for read-only reports)
+    const rateLimit = globalRateLimitTracker.trackRequest(
+      `user_${user.userId}_reports`,
+      100,
+      3600
+    );
 
-    // Monthly trends
-    const monthlyTrends = await query(`
-      SELECT
-        DATE_FORMAT(start_date, '%Y-%m') as month,
-        SUM(total_price) as revenue,
-        COUNT(*) as bookings,
-        AVG(total_price) as avg_value,
-        SUM(adults + children) as total_pax
-      FROM quotes
-      WHERE organization_id = ?
-      AND status = 'accepted'
-      AND start_date BETWEEN ? AND ?
-      GROUP BY DATE_FORMAT(start_date, '%Y-%m')
-      ORDER BY month ASC
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
-    // Year-over-year comparison
-    const previousYearStart = new Date(startDate);
-    previousYearStart.setFullYear(previousYearStart.getFullYear() - 1);
-    const previousYearEnd = new Date(endDate);
-    previousYearEnd.setFullYear(previousYearEnd.getFullYear() - 1);
+const { searchParams } = new URL(request.url);
+        const period = searchParams.get('period') || 'this_year';
+        const { startDate, endDate } = calculateDateRange(period);
 
-    const previousYearData = await query(`
-      SELECT
-        DATE_FORMAT(start_date, '%Y-%m') as month,
-        SUM(total_price) as revenue,
-        COUNT(*) as bookings
-      FROM quotes
-      WHERE organization_id = ?
-      AND status = 'accepted'
-      AND start_date BETWEEN ? AND ?
-      GROUP BY DATE_FORMAT(start_date, '%Y-%m')
-      ORDER BY month ASC
-    `, [parseInt(tenantId), previousYearStart.toISOString().split('T')[0], previousYearEnd.toISOString().split('T')[0]]) as any[];
+        // Monthly trends
+        const monthlyTrends = await query(`
+          SELECT
+            DATE_FORMAT(start_date, '%Y-%m') as month,
+            SUM(total_price) as revenue,
+            COUNT(*) as bookings,
+            AVG(total_price) as avg_value,
+            SUM(adults + children) as total_pax
+          FROM quotes
+          WHERE organization_id = ?
+          AND status = 'accepted'
+          AND start_date BETWEEN ? AND ?
+          GROUP BY DATE_FORMAT(start_date, '%Y-%m')
+          ORDER BY month ASC
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-    // Seasonal patterns (by quarter)
-    const quarterlyData = await query(`
-      SELECT
-        CONCAT('Q', QUARTER(start_date)) as quarter,
-        SUM(total_price) as revenue,
-        COUNT(*) as bookings,
-        AVG(total_price) as avg_value
-      FROM quotes
-      WHERE organization_id = ?
-      AND status = 'accepted'
-      AND start_date BETWEEN ? AND ?
-      GROUP BY QUARTER(start_date)
-      ORDER BY QUARTER(start_date)
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+        // Year-over-year comparison
+        const previousYearStart = new Date(startDate);
+        previousYearStart.setFullYear(previousYearStart.getFullYear() - 1);
+        const previousYearEnd = new Date(endDate);
+        previousYearEnd.setFullYear(previousYearEnd.getFullYear() - 1);
 
-    // Day of week analysis
-    const dayOfWeekData = await query(`
-      SELECT
-        DAYNAME(start_date) as day_name,
-        DAYOFWEEK(start_date) as day_num,
-        COUNT(*) as bookings,
-        SUM(total_price) as revenue,
-        AVG(total_price) as avg_value
-      FROM quotes
-      WHERE organization_id = ?
-      AND status = 'accepted'
-      AND start_date BETWEEN ? AND ?
-      GROUP BY DAYNAME(start_date), DAYOFWEEK(start_date)
-      ORDER BY day_num
-    `, [parseInt(tenantId), startDate, endDate]) as any[];
+        const previousYearData = await query(`
+          SELECT
+            DATE_FORMAT(start_date, '%Y-%m') as month,
+            SUM(total_price) as revenue,
+            COUNT(*) as bookings
+          FROM quotes
+          WHERE organization_id = ?
+          AND status = 'accepted'
+          AND start_date BETWEEN ? AND ?
+          GROUP BY DATE_FORMAT(start_date, '%Y-%m')
+          ORDER BY month ASC
+        `, [parseInt(tenantId), previousYearStart.toISOString().split('T')[0], previousYearEnd.toISOString().split('T')[0]]) as any[];
 
-    // Growth rate calculation
-    const trendsWithGrowth = monthlyTrends.map((trend: any, index: number) => {
-      let growthRate = 0;
-      if (index > 0) {
-        const prevRevenue = parseFloat(monthlyTrends[index - 1].revenue || 0);
-        const currRevenue = parseFloat(trend.revenue || 0);
-        if (prevRevenue > 0) {
-          growthRate = ((currRevenue - prevRevenue) / prevRevenue) * 100;
-        }
-      }
+        // Seasonal patterns (by quarter)
+        const quarterlyData = await query(`
+          SELECT
+            CONCAT('Q', QUARTER(start_date)) as quarter,
+            SUM(total_price) as revenue,
+            COUNT(*) as bookings,
+            AVG(total_price) as avg_value
+          FROM quotes
+          WHERE organization_id = ?
+          AND status = 'accepted'
+          AND start_date BETWEEN ? AND ?
+          GROUP BY QUARTER(start_date)
+          ORDER BY QUARTER(start_date)
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
 
-      return {
-        month: trend.month,
-        revenue: createMoney(parseFloat(trend.revenue || 0), 'EUR'),
-        bookings: parseInt(trend.bookings || 0),
-        avgValue: createMoney(parseFloat(trend.avg_value || 0), 'EUR'),
-        totalPax: parseInt(trend.total_pax || 0),
-        growthRate: Math.round(growthRate * 100) / 100
-      };
+        // Day of week analysis
+        const dayOfWeekData = await query(`
+          SELECT
+            DAYNAME(start_date) as day_name,
+            DAYOFWEEK(start_date) as day_num,
+            COUNT(*) as bookings,
+            SUM(total_price) as revenue,
+            AVG(total_price) as avg_value
+          FROM quotes
+          WHERE organization_id = ?
+          AND status = 'accepted'
+          AND start_date BETWEEN ? AND ?
+          GROUP BY DAYNAME(start_date), DAYOFWEEK(start_date)
+          ORDER BY day_num
+        `, [parseInt(tenantId), startDate, endDate]) as any[];
+
+        // Growth rate calculation
+        const trendsWithGrowth = monthlyTrends.map((trend: any, index: number) => {
+          let growthRate = 0;
+          if (index > 0) {
+            const prevRevenue = parseFloat(monthlyTrends[index - 1].revenue || 0);
+            const currRevenue = parseFloat(trend.revenue || 0);
+            if (prevRevenue > 0) {
+              growthRate = ((currRevenue - prevRevenue) / prevRevenue) * 100;
+            }
+          }
+
+          return {
+            month: trend.month,
+            revenue: createMoney(parseFloat(trend.revenue || 0), 'EUR'),
+            bookings: parseInt(trend.bookings || 0),
+            avgValue: createMoney(parseFloat(trend.avg_value || 0), 'EUR'),
+            totalPax: parseInt(trend.total_pax || 0),
+            growthRate: Math.round(growthRate * 100) / 100
+          };
+        });
+
+        const data = {
+          period: { start_date: startDate, end_date: endDate },
+          monthlyTrends: trendsWithGrowth,
+          yearOverYear: {
+            current: monthlyTrends.map((t: any) => ({
+              month: t.month,
+              revenue: createMoney(parseFloat(t.revenue || 0), 'EUR'),
+              bookings: parseInt(t.bookings || 0)
+            })),
+            previous: previousYearData.map((t: any) => ({
+              month: t.month,
+              revenue: createMoney(parseFloat(t.revenue || 0), 'EUR'),
+              bookings: parseInt(t.bookings || 0)
+            }))
+          },
+          quarterly: quarterlyData.map((q: any) => ({
+            quarter: q.quarter,
+            revenue: createMoney(parseFloat(q.revenue || 0), 'EUR'),
+            bookings: parseInt(q.bookings || 0),
+            avgValue: createMoney(parseFloat(q.avg_value || 0), 'EUR')
+          })),
+          byDayOfWeek: dayOfWeekData.map((d: any) => ({
+            dayName: d.day_name,
+            bookings: parseInt(d.bookings || 0),
+            revenue: createMoney(parseFloat(d.revenue || 0), 'EUR'),
+            avgValue: createMoney(parseFloat(d.avg_value || 0), 'EUR')
+          }))
+        };
+
+    // Create response with headers
+    const response = NextResponse.json({ data });
+    response.headers.set('X-Request-Id', requestId);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+
+    // Log response
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      report: 'sales_trends',
     });
 
-    const data = {
-      period: { start_date: startDate, end_date: endDate },
-      monthlyTrends: trendsWithGrowth,
-      yearOverYear: {
-        current: monthlyTrends.map((t: any) => ({
-          month: t.month,
-          revenue: createMoney(parseFloat(t.revenue || 0), 'EUR'),
-          bookings: parseInt(t.bookings || 0)
-        })),
-        previous: previousYearData.map((t: any) => ({
-          month: t.month,
-          revenue: createMoney(parseFloat(t.revenue || 0), 'EUR'),
-          bookings: parseInt(t.bookings || 0)
-        }))
-      },
-      quarterly: quarterlyData.map((q: any) => ({
-        quarter: q.quarter,
-        revenue: createMoney(parseFloat(q.revenue || 0), 'EUR'),
-        bookings: parseInt(q.bookings || 0),
-        avgValue: createMoney(parseFloat(q.avg_value || 0), 'EUR')
-      })),
-      byDayOfWeek: dayOfWeekData.map((d: any) => ({
-        dayName: d.day_name,
-        bookings: parseInt(d.bookings || 0),
-        revenue: createMoney(parseFloat(d.revenue || 0), 'EUR'),
-        avgValue: createMoney(parseFloat(d.avg_value || 0), 'EUR')
-      }))
-    };
+    return response;
+  } catch (error: any) {
+    // Log error
+    logResponse(requestId, 500, Date.now() - startTime, {
+      error: error.message,
+    });
 
-    return successResponse(data);
-  } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(internalServerErrorProblem(request.url));
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'An unexpected error occurred while generating the report',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
-
 function calculateDateRange(period: string) {
   const now = new Date();
   let startDate: Date;

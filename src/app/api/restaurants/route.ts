@@ -1,29 +1,45 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { parsePaginationParams, buildPagedResponse, parseSortParams } from '@/lib/pagination';
-import { successResponse, errorResponse, internalServerErrorProblem } from '@/lib/response';
+import { parseStandardPaginationParams, buildStandardListResponse } from '@/lib/pagination';
+import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
+import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
 
 // GET - Fetch all meal pricing records with pagination
 export async function GET(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const authResult = await requirePermission(request, 'providers', 'read');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { user, tenantId } = authResult;
+
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 100, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const { searchParams } = new URL(request.url);
 
     // Parse pagination parameters
-    const { page, pageSize, offset } = parsePaginationParams(searchParams);
+    const { page, pageSize, offset } = parseStandardPaginationParams(searchParams);
 
-    // Parse sort parameter (default: restaurant_name ASC, season_name ASC)
-    const sortParam = searchParams.get('sort') || 'restaurant_name,season_name';
-    // SECURITY: Whitelist allowed columns to prevent SQL injection
-    const ALLOWED_COLUMNS = ['id', 'restaurant_name', 'city', 'meal_type', 'season_name', 'start_date', 'end_date', 'status', 'created_at', 'updated_at'];
-    const orderByClause = parseSortParams(sortParam, ALLOWED_COLUMNS) || 'restaurant_name ASC, season_name ASC';
+    // Default sort order
+    const orderByClause = 'mp.restaurant_name ASC, mp.season_name ASC';
 
     // Build WHERE conditions manually with table qualifiers
     const whereConditions: string[] = [];
@@ -94,28 +110,72 @@ export async function GET(request: NextRequest) {
 
     const total = (countResult as any)[0].total;
 
-    // Return paginated response
-    const pagedResponse = buildPagedResponse(rows, total, page, pageSize);
+    // Build paged response
+    const baseUrl = new URL(request.url).origin + new URL(request.url).pathname;
+    const filters: Record<string, string> = {};
+    if (statusFilter && statusFilter !== 'all') filters.status = statusFilter;
+    if (cityFilter && cityFilter !== 'all') filters.city = cityFilter;
+    if (mealTypeFilter && mealTypeFilter !== 'all') filters.meal_type = mealTypeFilter;
+    if (searchTerm) filters.search = searchTerm;
 
-    return NextResponse.json(pagedResponse);
+    const responseData = buildStandardListResponse(rows, total, page, pageSize, baseUrl, filters);
+
+    const response = NextResponse.json(responseData);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      total_results: total
+    });
+
+    return response;
   } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(internalServerErrorProblem('Failed to fetch restaurants'));
+    console.error('Error fetching restaurants:', error);
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Internal server error',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 
 // POST - Create new meal pricing record
 export async function POST(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const authResult = await requirePermission(request, 'providers', 'create');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { user, tenantId } = authResult;
+
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 50, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     // Check for idempotency key
     const idempotencyKey = request.headers.get('Idempotency-Key');
+    if (idempotencyKey) {
+      const cachedResponse = await checkIdempotencyKey(request, idempotencyKey);
+      if (cachedResponse) {
+        return cachedResponse;
+      }
+    }
 
     const body = await request.json();
     const {
@@ -135,29 +195,6 @@ export async function POST(request: NextRequest) {
       created_by,
       notes
     } = body;
-
-    // If idempotency key is provided, check if this request was already processed
-    if (idempotencyKey) {
-      const existingResult = await query(
-        `SELECT id FROM meal_pricing WHERE created_by = ? AND restaurant_name = ? AND season_name = ?
-         ORDER BY created_at DESC LIMIT 1`,
-        [created_by, restaurant_name, season_name]
-      );
-
-      if ((existingResult as any[]).length > 0) {
-        const existingId = (existingResult as any[])[0].id;
-        // Return existing resource with 201 status and Location header
-        return NextResponse.json(
-          { id: existingId, message: 'Resource already exists' },
-          {
-            status: 201,
-            headers: {
-              Location: `/api/restaurants/${existingId}`,
-            },
-          }
-        );
-      }
-    }
 
     const result = await query(
       `INSERT INTO meal_pricing (
@@ -188,39 +225,79 @@ export async function POST(request: NextRequest) {
 
     const insertId = (result as any).insertId;
 
+    // Fetch created record
+    const [created] = await query(
+      'SELECT * FROM meal_pricing WHERE id = ?',
+      [insertId]
+    ) as any[];
+
     // Return 201 Created with Location header
-    return NextResponse.json(
-      { id: insertId },
-      {
-        status: 201,
-        headers: {
-          Location: `/api/restaurants/${insertId}`,
-        },
+    const response = NextResponse.json(created, {
+      status: 201,
+      headers: {
+        Location: `/api/restaurants/${insertId}`,
       }
-    );
+    });
+
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+
+    if (idempotencyKey) {
+      storeIdempotencyKey(idempotencyKey, response);
+    }
+
+    logResponse(requestId, 201, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      restaurant_id: insertId
+    });
+    return response;
   } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(internalServerErrorProblem('Failed to create restaurant pricing'));
+    console.error('Error creating restaurant:', error);
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Internal server error',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 
 // PUT - Update restaurant (meal pricing)
 export async function PUT(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Require tenant
     const authResult = await requirePermission(request, 'providers', 'update');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { user, tenantId } = authResult;
+
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 50, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const body = await request.json();
     const { id } = body;
 
     if (!id) {
-      return NextResponse.json(
-        { error: 'Restaurant ID is required' },
-        { status: 400 }
+      return validationErrorResponse(
+        'Validation failed',
+        [{ field: 'id', issue: 'required', message: 'Restaurant ID is required' }],
+        requestId
       );
     }
 
@@ -231,9 +308,12 @@ export async function PUT(request: NextRequest) {
     ) as any[];
 
     if (!existingRestaurant) {
-      return NextResponse.json(
-        { error: 'Restaurant not found or does not belong to your organization' },
-        { status: 404 }
+      return standardErrorResponse(
+        ErrorCodes.NOT_FOUND,
+        'Restaurant not found or does not belong to your organization',
+        404,
+        undefined,
+        requestId
       );
     }
 
@@ -281,11 +361,31 @@ export async function PUT(request: NextRequest) {
       ]
     );
 
-    // Return success
-    return NextResponse.json({ id, message: 'Restaurant updated successfully' });
+    // Fetch updated record
+    const [updated] = await query(
+      'SELECT * FROM meal_pricing WHERE id = ?',
+      [id]
+    ) as any[];
+
+    const response = NextResponse.json(updated);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      restaurant_id: id
+    });
+
+    return response;
   } catch (error) {
-    console.error('Database error:', error);
-    return errorResponse(internalServerErrorProblem('Failed to update restaurant pricing'));
+    console.error('Error updating restaurant:', error);
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Internal server error',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 

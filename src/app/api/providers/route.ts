@@ -1,25 +1,43 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
-import { parsePaginationParams, parseSortParams, buildPagedResponse } from '@/lib/pagination';
+import { parseStandardPaginationParams, buildStandardListResponse } from '@/lib/pagination';
 import { buildWhereClause, buildSearchClause, combineWhereAndSearch } from '@/lib/query-builder';
-import { successResponse, createdResponse, errorResponse, internalServerErrorProblem, badRequestProblem } from '@/lib/response';
+import { standardErrorResponse, validationErrorResponse, ErrorCodes, addStandardHeaders } from '@/lib/response';
 import { requirePermission } from '@/middleware/permissions';
+import { getRequestId, logRequest, logResponse } from '@/middleware/correlation';
+import { addRateLimitHeaders, globalRateLimitTracker } from '@/middleware/rateLimit';
 import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
 
 // GET - Fetch all providers with pagination, search, and filters
 export async function GET(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Enforce tenant scoping
     const authResult = await requirePermission(request, 'providers', 'read');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { user, tenantId } = authResult;
+
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 100, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     const { searchParams } = new URL(request.url);
 
     // Parse pagination parameters
-    const { page, pageSize, offset } = parsePaginationParams(searchParams);
+    const { page, pageSize, offset } = parseStandardPaginationParams(searchParams);
 
     // Parse filters
     const filters: Record<string, any> = {
@@ -74,11 +92,8 @@ export async function GET(request: NextRequest) {
     }
     const finalParams = combined.params;
 
-    // Parse sort parameters (default: provider_name ASC)
-    const sortParam = searchParams.get('sort') || 'provider_name';
-    // SECURITY: Whitelist allowed columns to prevent SQL injection
-    const ALLOWED_COLUMNS = ['id', 'provider_name', 'provider_type', 'city', 'contact_email', 'contact_phone', 'status', 'created_at', 'updated_at'];
-    const orderBy = parseSortParams(sortParam, ALLOWED_COLUMNS) || 'provider_name ASC';
+    // Default sort order
+    const orderBy = 'p.provider_name ASC';
 
     // Build main query with service counts
     let sql = `
@@ -124,24 +139,62 @@ export async function GET(request: NextRequest) {
     const total = (countResult as any)[0].total;
 
     // Build paged response
-    const response = buildPagedResponse(rows, total, page, pageSize);
+    const baseUrl = new URL(request.url).origin + new URL(request.url).pathname;
+    const responseFilters: Record<string, string> = {};
+    if (statusFilter && statusFilter !== 'all') responseFilters.status = statusFilter;
+    if (cityFilter && cityFilter !== 'all') responseFilters.city = cityFilter;
+    if (providerTypeFilter && providerTypeFilter !== 'all') responseFilters.provider_type = providerTypeFilter;
+    if (searchTerm) responseFilters.search = searchTerm;
 
-    return successResponse(response);
+    const responseData = buildStandardListResponse(rows, total, page, pageSize, baseUrl, responseFilters);
+
+    const response = NextResponse.json(responseData);
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
+    logResponse(requestId, 200, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      total_results: total
+    });
+
+    return response;
   } catch (error) {
     console.error('Error fetching providers:', error);
-    return errorResponse(internalServerErrorProblem('Failed to fetch providers'));
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Internal server error',
+      500,
+      undefined,
+      requestId
+    );
   }
 }
 
 // POST - Create new provider
 export async function POST(request: NextRequest) {
+  const requestId = getRequestId(request);
+  const startTime = Date.now();
+
   try {
     // Enforce tenant scoping
     const authResult = await requirePermission(request, 'providers', 'create');
     if ('error' in authResult) {
       return authResult.error;
     }
-    const { tenantId } = authResult;
+    const { user, tenantId } = authResult;
+
+    // Rate limiting
+    const rateLimit = globalRateLimitTracker.trackRequest(`user_${user.userId}`, 50, 3600);
+    if (rateLimit.remaining === 0) {
+      const minutesLeft = Math.ceil((rateLimit.reset - Math.floor(Date.now() / 1000)) / 60);
+      return standardErrorResponse(
+        ErrorCodes.RATE_LIMIT_EXCEEDED,
+        `Rate limit exceeded. Try again in ${minutesLeft} minutes.`,
+        429,
+        undefined,
+        requestId
+      );
+    }
 
     // Check idempotency key
     const idempotencyKey = request.headers.get('Idempotency-Key');
@@ -166,12 +219,12 @@ export async function POST(request: NextRequest) {
     } = body;
 
     // Validate required fields
-    if (!provider_name) {
-      return errorResponse(badRequestProblem('provider_name is required'));
-    }
+    const errors = [];
+    if (!provider_name) errors.push({ field: 'provider_name', issue: 'required', message: 'provider_name is required' });
+    if (!provider_type) errors.push({ field: 'provider_type', issue: 'required', message: 'provider_type is required' });
 
-    if (!provider_type) {
-      return errorResponse(badRequestProblem('provider_type is required'));
+    if (errors.length > 0) {
+      return validationErrorResponse('Validation failed', errors, requestId);
     }
 
     // Insert provider with organization_id
@@ -212,16 +265,35 @@ export async function POST(request: NextRequest) {
     const location = `/api/providers/${insertId}`;
 
     // Create response
-    const response = createdResponse(createdProvider, location);
+    const response = NextResponse.json(createdProvider, {
+      status: 201,
+      headers: {
+        Location: location
+      }
+    });
+
+    addRateLimitHeaders(response, rateLimit);
+    addStandardHeaders(response, requestId);
 
     // Store idempotency key if provided
     if (idempotencyKey) {
       storeIdempotencyKey(idempotencyKey, response);
     }
 
+    logResponse(requestId, 201, Date.now() - startTime, {
+      user_id: user.userId,
+      tenant_id: tenantId,
+      provider_id: insertId
+    });
     return response;
   } catch (error) {
     console.error('Error creating provider:', error);
-    return errorResponse(internalServerErrorProblem('Failed to create provider'));
+    return standardErrorResponse(
+      ErrorCodes.INTERNAL_ERROR,
+      'Internal server error',
+      500,
+      undefined,
+      requestId
+    );
   }
 }

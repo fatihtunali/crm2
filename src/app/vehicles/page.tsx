@@ -33,7 +33,7 @@ interface Vehicle {
 export default function VehiclesPage() {
   const { organizationId } = useAuth();
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
-  const [filteredVehicles, setFilteredVehicles] = useState<Vehicle[]>([]);
+  const [allVehicles, setAllVehicles] = useState<Vehicle[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
   const [cityFilter, setCityFilter] = useState('all');
@@ -51,14 +51,18 @@ export default function VehiclesPage() {
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
   useEffect(() => {
-    fetchVehicles();
-  }, []);
+    if (organizationId) {
+      fetchAllVehicles();
+    }
+  }, [organizationId]);
 
   useEffect(() => {
-    filterVehicles();
-  }, [vehicles, statusFilter, cityFilter, searchTerm]);
+    if (organizationId) {
+      fetchVehicles();
+    }
+  }, [organizationId, statusFilter, cityFilter, searchTerm]);
 
-  async function fetchVehicles() {
+  async function fetchAllVehicles() {
     try {
       const res = await fetch('/api/vehicles?limit=10000', {
         headers: {
@@ -66,8 +70,39 @@ export default function VehiclesPage() {
         }
       });
       const data = await res.json();
+      const vehiclesData = Array.isArray(data.data) ? data.data : [];
+      setAllVehicles(vehiclesData);
+    } catch (error) {
+      console.error('Failed to fetch all vehicles:', error);
+      setAllVehicles([]);
+    }
+  }
 
-      // Handle paged response format
+  async function fetchVehicles() {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        limit: '10000',
+      });
+
+      if (statusFilter && statusFilter !== 'all') {
+        params.append('status', statusFilter);
+      }
+
+      if (cityFilter && cityFilter !== 'all') {
+        params.append('city', cityFilter);
+      }
+
+      if (searchTerm) {
+        params.append('search', searchTerm);
+      }
+
+      const res = await fetch(`/api/vehicles?${params.toString()}`, {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
+      const data = await res.json();
       const vehiclesData = Array.isArray(data.data) ? data.data : [];
       setVehicles(vehiclesData);
     } catch (error) {
@@ -76,28 +111,6 @@ export default function VehiclesPage() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function filterVehicles() {
-    let filtered = vehicles;
-
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(v => v.status === statusFilter);
-    }
-
-    if (cityFilter !== 'all') {
-      filtered = filtered.filter(v => v.city === cityFilter);
-    }
-
-    if (searchTerm) {
-      filtered = filtered.filter(v =>
-        v.vehicle_type.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        v.city.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (v.description && v.description.toLowerCase().includes(searchTerm.toLowerCase()))
-      );
-    }
-
-    setFilteredVehicles(filtered);
   }
 
   function handleView(vehicle: Vehicle) {
@@ -158,13 +171,13 @@ export default function VehiclesPage() {
   }
 
   const statusCounts = {
-    all: vehicles.length,
-    active: vehicles.filter(v => v.status === 'active').length,
-    inactive: vehicles.filter(v => v.status === 'inactive').length,
+    all: allVehicles.length,
+    active: allVehicles.filter(v => v.status === 'active').length,
+    inactive: allVehicles.filter(v => v.status === 'inactive').length,
   };
 
   // Get unique cities for filter
-  const cities = Array.from(new Set(vehicles.map(v => v.city))).sort();
+  const cities = Array.from(new Set(allVehicles.map(v => v.city))).sort();
 
   return (
     <div className="p-8">
@@ -197,13 +210,13 @@ export default function VehiclesPage() {
       {/* Results Summary */}
       <div className="mb-4 flex items-center justify-between">
         <p className="text-sm text-gray-600">
-          Showing <span className="font-semibold">{filteredVehicles.length}</span> of <span className="font-semibold">{vehicles.length}</span> vehicles
+          Showing <span className="font-semibold">{vehicles.length}</span> of <span className="font-semibold">{allVehicles.length}</span> vehicles
         </p>
       </div>
 
       {/* Vehicles Table */}
       <VehicleTable
-        vehicles={filteredVehicles}
+        vehicles={vehicles}
         loading={loading}
         onView={handleView}
         onEdit={handleEdit}

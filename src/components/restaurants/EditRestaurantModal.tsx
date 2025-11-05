@@ -96,7 +96,8 @@ export default function EditRestaurantModal({ isOpen, onClose, onSuccess, restau
 
   async function fetchProviders() {
     try {
-      const res = await fetch('/api/providers?include_all=true&limit=1000', {
+      // Only fetch restaurant providers for meal pricing
+      const res = await fetch('/api/providers?provider_type=restaurant&limit=1000', {
         headers: {
           'X-Tenant-Id': organizationId
         }

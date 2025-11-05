@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
     // Archive filter (Phase 3: default exclude archived)
     const includeArchived = searchParams.get('include_archived') === 'true';
     if (!includeArchived) {
-      filters.archived_at = null;
+      filters['h.archived_at'] = null;
     }
 
     if (statusFilter && statusFilter !== 'all') {
@@ -109,7 +109,7 @@ export async function GET(request: NextRequest) {
     const searchClause = buildSearchClause(searchTerm, [
       'h.hotel_name',
       'h.city',
-      'h.region',
+      'h.address',
     ]);
 
     // 9. Build main query

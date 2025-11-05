@@ -18,8 +18,17 @@ interface PricingRecord {
   pvt_price_6_pax: number | null;
   pvt_price_8_pax: number | null;
   pvt_price_10_pax: number | null;
+  sic_provider_id: number | null;
+  pvt_provider_id: number | null;
   notes: string | null;
   status: string;
+}
+
+interface Provider {
+  id: number;
+  provider_name: string;
+  provider_type: string;
+  provider_types?: string[] | string;
 }
 
 interface ManagePricingModalProps {
@@ -32,6 +41,7 @@ interface ManagePricingModalProps {
 export default function ManagePricingModal({ isOpen, onClose, tourId, tourName }: ManagePricingModalProps) {
   const { organizationId } = useAuth();
   const [pricingRecords, setPricingRecords] = useState<PricingRecord[]>([]);
+  const [providers, setProviders] = useState<Provider[]>([]);
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [showNewForm, setShowNewForm] = useState(false);
@@ -51,12 +61,15 @@ export default function ManagePricingModal({ isOpen, onClose, tourId, tourName }
     pvt_price_6_pax: '',
     pvt_price_8_pax: '',
     pvt_price_10_pax: '',
+    sic_provider_id: null as number | null,
+    pvt_provider_id: null as number | null,
     notes: ''
   });
 
   useEffect(() => {
     if (isOpen && tourId) {
       fetchPricing();
+      fetchProviders();
     }
   }, [isOpen, tourId]);
 
@@ -105,6 +118,22 @@ export default function ManagePricingModal({ isOpen, onClose, tourId, tourName }
     }
   }
 
+  async function fetchProviders() {
+    try {
+      // Fetch tour operators for SIC/PVT pricing
+      const res = await fetch('/api/providers?provider_type=tour_operator&limit=1000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
+      const data = await res.json();
+      setProviders(Array.isArray(data.data) ? data.data : []);
+    } catch (error) {
+      console.error('Failed to fetch providers:', error);
+      setProviders([]);
+    }
+  }
+
   function startEdit(record: PricingRecord) {
     setEditingId(record.id);
     setFormData({
@@ -122,6 +151,8 @@ export default function ManagePricingModal({ isOpen, onClose, tourId, tourName }
       pvt_price_6_pax: record.pvt_price_6_pax?.toString() || '',
       pvt_price_8_pax: record.pvt_price_8_pax?.toString() || '',
       pvt_price_10_pax: record.pvt_price_10_pax?.toString() || '',
+      sic_provider_id: record.sic_provider_id,
+      pvt_provider_id: record.pvt_provider_id,
       notes: record.notes || ''
     });
     setShowNewForm(false);
@@ -144,6 +175,8 @@ export default function ManagePricingModal({ isOpen, onClose, tourId, tourName }
       pvt_price_6_pax: '',
       pvt_price_8_pax: '',
       pvt_price_10_pax: '',
+      sic_provider_id: null,
+      pvt_provider_id: null,
       notes: ''
     });
     setShowNewForm(true);
@@ -163,6 +196,8 @@ export default function ManagePricingModal({ isOpen, onClose, tourId, tourName }
         pvt_price_6_pax: formData.pvt_price_6_pax ? parseFloat(formData.pvt_price_6_pax) : null,
         pvt_price_8_pax: formData.pvt_price_8_pax ? parseFloat(formData.pvt_price_8_pax) : null,
         pvt_price_10_pax: formData.pvt_price_10_pax ? parseFloat(formData.pvt_price_10_pax) : null,
+        sic_provider_id: formData.sic_provider_id,
+        pvt_provider_id: formData.pvt_provider_id,
       };
 
       if (editingId) {
@@ -277,7 +312,25 @@ export default function ManagePricingModal({ isOpen, onClose, tourId, tourName }
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
                 {/* SIC Pricing */}
                 <div>
-                  <h4 className="font-medium text-gray-700 mb-2">SIC Pricing (per person)</h4>
+                  <h4 className="font-medium text-gray-700 mb-3">SIC Pricing (per person)</h4>
+
+                  {/* SIC Provider */}
+                  <div className="mb-3">
+                    <label className="block text-xs font-medium text-gray-600 mb-1">SIC Tour Operator</label>
+                    <select
+                      value={formData.sic_provider_id || ''}
+                      onChange={(e) => setFormData({...formData, sic_provider_id: e.target.value ? parseInt(e.target.value) : null})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                    >
+                      <option value="">Not assigned</option>
+                      {providers.map(provider => (
+                        <option key={provider.id} value={provider.id}>
+                          {provider.provider_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div className="space-y-2">
                     {['2', '4', '6', '8', '10'].map(pax => (
                       <div key={pax} className="flex items-center gap-2">
@@ -297,7 +350,25 @@ export default function ManagePricingModal({ isOpen, onClose, tourId, tourName }
 
                 {/* Private Pricing */}
                 <div>
-                  <h4 className="font-medium text-gray-700 mb-2">Private Pricing (per person)</h4>
+                  <h4 className="font-medium text-gray-700 mb-3">Private Pricing (per person)</h4>
+
+                  {/* PVT Provider */}
+                  <div className="mb-3">
+                    <label className="block text-xs font-medium text-gray-600 mb-1">PVT Tour Operator</label>
+                    <select
+                      value={formData.pvt_provider_id || ''}
+                      onChange={(e) => setFormData({...formData, pvt_provider_id: e.target.value ? parseInt(e.target.value) : null})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded text-sm"
+                    >
+                      <option value="">Not assigned</option>
+                      {providers.map(provider => (
+                        <option key={provider.id} value={provider.id}>
+                          {provider.provider_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
                   <div className="space-y-2">
                     {['2', '4', '6', '8', '10'].map(pax => (
                       <div key={pax} className="flex items-center gap-2">
@@ -385,6 +456,11 @@ export default function ManagePricingModal({ isOpen, onClose, tourId, tourName }
                     {/* SIC Prices */}
                     <div>
                       <p className="font-medium text-gray-700 mb-1">SIC Pricing ({record.currency})</p>
+                      {record.sic_provider_id && (
+                        <p className="text-xs text-blue-600 mb-2">
+                          Operator: {providers.find(p => p.id === record.sic_provider_id)?.provider_name || 'Unknown'}
+                        </p>
+                      )}
                       <div className="space-y-1 text-gray-600">
                         {record.sic_price_2_pax && <p>2 PAX: {record.currency} {parseFloat(record.sic_price_2_pax.toString()).toFixed(2)}</p>}
                         {record.sic_price_4_pax && <p>4 PAX: {record.currency} {parseFloat(record.sic_price_4_pax.toString()).toFixed(2)}</p>}
@@ -397,6 +473,11 @@ export default function ManagePricingModal({ isOpen, onClose, tourId, tourName }
                     {/* Private Prices */}
                     <div>
                       <p className="font-medium text-gray-700 mb-1">Private Pricing ({record.currency})</p>
+                      {record.pvt_provider_id && (
+                        <p className="text-xs text-blue-600 mb-2">
+                          Operator: {providers.find(p => p.id === record.pvt_provider_id)?.provider_name || 'Unknown'}
+                        </p>
+                      )}
                       <div className="space-y-1 text-gray-600">
                         {record.pvt_price_2_pax && <p>2 PAX: {record.currency} {parseFloat(record.pvt_price_2_pax.toString()).toFixed(2)}</p>}
                         {record.pvt_price_4_pax && <p>4 PAX: {record.currency} {parseFloat(record.pvt_price_4_pax.toString()).toFixed(2)}</p>}

@@ -34,7 +34,7 @@ interface Transfer {
 export default function TransfersPage() {
   const { organizationId } = useAuth();
   const [transfers, setTransfers] = useState<Transfer[]>([]);
-  const [filteredTransfers, setFilteredTransfers] = useState<Transfer[]>([]);
+  const [allTransfers, setAllTransfers] = useState<Transfer[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
   const [fromCityFilter, setFromCityFilter] = useState('all');
@@ -52,14 +52,18 @@ export default function TransfersPage() {
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
   useEffect(() => {
-    fetchTransfers();
-  }, []);
+    if (organizationId) {
+      fetchAllTransfers();
+    }
+  }, [organizationId]);
 
   useEffect(() => {
-    filterTransfers();
-  }, [transfers, statusFilter, fromCityFilter, toCityFilter, searchTerm]);
+    if (organizationId) {
+      fetchTransfers();
+    }
+  }, [organizationId, statusFilter, fromCityFilter, toCityFilter, searchTerm]);
 
-  async function fetchTransfers() {
+  async function fetchAllTransfers() {
     try {
       const res = await fetch('/api/transfers?limit=10000', {
         headers: {
@@ -68,7 +72,50 @@ export default function TransfersPage() {
       });
       const data = await res.json();
 
-      // Handle paged response format and convert Money objects to decimals
+      const transfersData = Array.isArray(data.data) ? data.data : [];
+      const converted = transfersData.map((transfer: any) => ({
+        ...transfer,
+        price_oneway: transfer.price_oneway?.amount_minor ? transfer.price_oneway.amount_minor / 100 : transfer.price_oneway,
+        price_roundtrip: transfer.price_roundtrip?.amount_minor ? transfer.price_roundtrip.amount_minor / 100 : transfer.price_roundtrip
+      }));
+
+      setAllTransfers(converted);
+    } catch (error) {
+      console.error('Failed to fetch all transfers:', error);
+      setAllTransfers([]);
+    }
+  }
+
+  async function fetchTransfers() {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        limit: '10000',
+      });
+
+      if (statusFilter && statusFilter !== 'all') {
+        params.append('status', statusFilter);
+      }
+
+      if (fromCityFilter && fromCityFilter !== 'all') {
+        params.append('from_city', fromCityFilter);
+      }
+
+      if (toCityFilter && toCityFilter !== 'all') {
+        params.append('to_city', toCityFilter);
+      }
+
+      if (searchTerm) {
+        params.append('search', searchTerm);
+      }
+
+      const res = await fetch(`/api/transfers?${params.toString()}`, {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
+      const data = await res.json();
+
       const transfersData = Array.isArray(data.data) ? data.data : [];
       const converted = transfersData.map((transfer: any) => ({
         ...transfer,
@@ -83,33 +130,6 @@ export default function TransfersPage() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function filterTransfers() {
-    let filtered = transfers;
-
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(t => t.status === statusFilter);
-    }
-
-    if (fromCityFilter !== 'all') {
-      filtered = filtered.filter(t => t.from_city === fromCityFilter);
-    }
-
-    if (toCityFilter !== 'all') {
-      filtered = filtered.filter(t => t.to_city === toCityFilter);
-    }
-
-    if (searchTerm) {
-      filtered = filtered.filter(t =>
-        t.from_city.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        t.to_city.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        t.season_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (t.vehicle_type && t.vehicle_type.toLowerCase().includes(searchTerm.toLowerCase()))
-      );
-    }
-
-    setFilteredTransfers(filtered);
   }
 
   function handleView(transfer: Transfer) {
@@ -165,14 +185,14 @@ export default function TransfersPage() {
   }
 
   const statusCounts = {
-    all: transfers.length,
-    active: transfers.filter(t => t.status === 'active').length,
-    inactive: transfers.filter(t => t.status === 'inactive').length,
+    all: allTransfers.length,
+    active: allTransfers.filter(t => t.status === 'active').length,
+    inactive: allTransfers.filter(t => t.status === 'inactive').length,
   };
 
   // Get unique cities for filters
-  const fromCities = Array.from(new Set(transfers.map(t => t.from_city))).sort();
-  const toCities = Array.from(new Set(transfers.map(t => t.to_city))).sort();
+  const fromCities = Array.from(new Set(allTransfers.map(t => t.from_city))).sort();
+  const toCities = Array.from(new Set(allTransfers.map(t => t.to_city))).sort();
 
   return (
     <div className="p-8">
@@ -208,13 +228,13 @@ export default function TransfersPage() {
       {/* Results Summary */}
       <div className="mb-4 flex items-center justify-between">
         <p className="text-sm text-gray-600">
-          Showing <span className="font-semibold">{filteredTransfers.length}</span> of <span className="font-semibold">{transfers.length}</span> transfers
+          Showing <span className="font-semibold">{transfers.length}</span> of <span className="font-semibold">{allTransfers.length}</span> transfers
         </p>
       </div>
 
       {/* Transfers Table */}
       <TransferTable
-        transfers={filteredTransfers}
+        transfers={transfers}
         loading={loading}
         onView={handleView}
         onEdit={handleEdit}

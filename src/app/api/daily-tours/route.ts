@@ -42,10 +42,13 @@ export async function GET(request: Request) {
     whereConditions.push('t.organization_id = ?');
     params.push(parseInt(tenantId));
 
-    // Status filter
+    // Status filter (default: only show active tours)
     if (statusFilter && statusFilter !== 'all') {
       whereConditions.push('t.status = ?');
       params.push(statusFilter);
+    } else if (!statusFilter || statusFilter === 'all') {
+      // Default: exclude inactive tours
+      whereConditions.push("t.status = 'active'");
     }
 
     // Tour type filter
@@ -60,6 +63,13 @@ export async function GET(request: Request) {
       params.push(cityFilter);
     }
 
+    // Provider filter
+    const providerFilter = searchParams.get('provider_id');
+    if (providerFilter && providerFilter !== 'all') {
+      whereConditions.push('t.provider_id = ?');
+      params.push(parseInt(providerFilter));
+    }
+
     // Search filter
     if (searchTerm) {
       whereConditions.push('(t.tour_name LIKE ? OR t.city LIKE ? OR t.description LIKE ?)');
@@ -69,7 +79,7 @@ export async function GET(request: Request) {
 
     const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : '';
 
-    // Build base query
+    // Build base query - use subquery to get only the first active pricing per tour
     const baseSelect = `
       SELECT
         t.*,
@@ -88,12 +98,25 @@ export async function GET(request: Request) {
         tp.pvt_price_4_pax,
         tp.pvt_price_6_pax,
         tp.pvt_price_8_pax,
-        tp.pvt_price_10_pax
+        tp.pvt_price_10_pax,
+        tp.sic_provider_id,
+        tp.pvt_provider_id,
+        sic_provider.provider_name as sic_provider_name,
+        pvt_provider.provider_name as pvt_provider_name
       FROM tours t
       LEFT JOIN providers p ON t.provider_id = p.id
       LEFT JOIN tour_pricing tp ON t.id = tp.tour_id
         AND tp.status = 'active'
         AND CURDATE() BETWEEN tp.start_date AND tp.end_date
+        AND tp.id = (
+          SELECT MIN(tp2.id)
+          FROM tour_pricing tp2
+          WHERE tp2.tour_id = t.id
+            AND tp2.status = 'active'
+            AND CURDATE() BETWEEN tp2.start_date AND tp2.end_date
+        )
+      LEFT JOIN providers sic_provider ON tp.sic_provider_id = sic_provider.id
+      LEFT JOIN providers pvt_provider ON tp.pvt_provider_id = pvt_provider.id
     `;
 
     const baseCount = `

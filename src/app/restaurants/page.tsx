@@ -37,7 +37,7 @@ interface Restaurant {
 export default function RestaurantsPage() {
   const { organizationId } = useAuth();
   const [restaurants, setRestaurants] = useState<Restaurant[]>([]);
-  const [filteredRestaurants, setFilteredRestaurants] = useState<Restaurant[]>([]);
+  const [allRestaurants, setAllRestaurants] = useState<Restaurant[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
   const [cityFilter, setCityFilter] = useState('all');
@@ -56,16 +56,57 @@ export default function RestaurantsPage() {
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
   useEffect(() => {
-    fetchRestaurants();
-  }, []);
+    if (organizationId) {
+      fetchAllRestaurants();
+    }
+  }, [organizationId]);
 
   useEffect(() => {
-    filterRestaurants();
-  }, [restaurants, statusFilter, cityFilter, mealTypeFilter, searchTerm]);
+    if (organizationId) {
+      fetchRestaurants();
+    }
+  }, [organizationId, statusFilter, cityFilter, mealTypeFilter, searchTerm]);
 
-  async function fetchRestaurants() {
+  async function fetchAllRestaurants() {
     try {
       const res = await fetch('/api/restaurants?limit=10000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
+      const data = await res.json();
+      const restaurantsData = Array.isArray(data.data) ? data.data : [];
+      setAllRestaurants(restaurantsData);
+    } catch (error) {
+      console.error('Failed to fetch all restaurants:', error);
+      setAllRestaurants([]);
+    }
+  }
+
+  async function fetchRestaurants() {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        limit: '10000',
+      });
+
+      if (statusFilter && statusFilter !== 'all') {
+        params.append('status', statusFilter);
+      }
+
+      if (cityFilter && cityFilter !== 'all') {
+        params.append('city', cityFilter);
+      }
+
+      if (mealTypeFilter && mealTypeFilter !== 'all') {
+        params.append('meal_type', mealTypeFilter);
+      }
+
+      if (searchTerm) {
+        params.append('search', searchTerm);
+      }
+
+      const res = await fetch(`/api/restaurants?${params.toString()}`, {
         headers: {
           'X-Tenant-Id': organizationId
         }
@@ -79,33 +120,6 @@ export default function RestaurantsPage() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function filterRestaurants() {
-    let filtered = restaurants;
-
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(r => r.status === statusFilter);
-    }
-
-    if (cityFilter !== 'all') {
-      filtered = filtered.filter(r => r.city === cityFilter);
-    }
-
-    if (mealTypeFilter !== 'all') {
-      filtered = filtered.filter(r => r.meal_type === mealTypeFilter);
-    }
-
-    if (searchTerm) {
-      filtered = filtered.filter(r =>
-        r.restaurant_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        r.city.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        r.season_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        r.menu_description?.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-    }
-
-    setFilteredRestaurants(filtered);
   }
 
   function handleView(restaurant: Restaurant) {
@@ -171,13 +185,13 @@ export default function RestaurantsPage() {
   }
 
   const statusCounts = {
-    all: restaurants.length,
-    active: restaurants.filter(r => r.status === 'active').length,
-    inactive: restaurants.filter(r => r.status === 'inactive').length,
+    all: allRestaurants.length,
+    active: allRestaurants.filter(r => r.status === 'active').length,
+    inactive: allRestaurants.filter(r => r.status === 'inactive').length,
   };
 
   // Get unique cities and meal types for filters
-  const cities = Array.from(new Set(restaurants.map(r => r.city))).sort();
+  const cities = Array.from(new Set(allRestaurants.map(r => r.city))).sort();
   const mealTypes = ['Lunch', 'Dinner', 'Both'];
 
   return (
@@ -214,13 +228,13 @@ export default function RestaurantsPage() {
       {/* Results Summary */}
       <div className="mb-4 flex items-center justify-between">
         <p className="text-sm text-gray-600">
-          Showing <span className="font-semibold">{filteredRestaurants.length}</span> of <span className="font-semibold">{restaurants.length}</span> restaurants
+          Showing <span className="font-semibold">{restaurants.length}</span> of <span className="font-semibold">{allRestaurants.length}</span> restaurants
         </p>
       </div>
 
       {/* Restaurants Table */}
       <RestaurantTable
-        restaurants={filteredRestaurants}
+        restaurants={restaurants}
         loading={loading}
         onView={handleView}
         onEdit={handleEdit}

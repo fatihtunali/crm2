@@ -22,6 +22,8 @@ interface TourPricingRecord {
   pvt_price_6_pax: number;
   pvt_price_8_pax: number;
   pvt_price_10_pax: number;
+  sic_provider_id: number | null;
+  pvt_provider_id: number | null;
   notes: string | null;
   status: string;
   effective_from: string;
@@ -46,6 +48,8 @@ interface TourPricingResponse {
   pvt_price_6_pax: Money;
   pvt_price_8_pax: Money;
   pvt_price_10_pax: Money;
+  sic_provider_id: number | null;
+  pvt_provider_id: number | null;
   notes: string | null;
   status: string;
   effective_from: string;
@@ -70,6 +74,8 @@ interface TourPricingInput {
   pvt_price_6_pax: Money;
   pvt_price_8_pax: Money;
   pvt_price_10_pax: Money;
+  sic_provider_id?: number | null;
+  pvt_provider_id?: number | null;
   notes?: string;
 }
 
@@ -90,6 +96,8 @@ function convertToResponse(record: TourPricingRecord): TourPricingResponse {
     pvt_price_6_pax: { amount_minor: toMinorUnits(record.pvt_price_6_pax), currency: record.currency },
     pvt_price_8_pax: { amount_minor: toMinorUnits(record.pvt_price_8_pax), currency: record.currency },
     pvt_price_10_pax: { amount_minor: toMinorUnits(record.pvt_price_10_pax), currency: record.currency },
+    sic_provider_id: record.sic_provider_id,
+    pvt_provider_id: record.pvt_provider_id,
     notes: record.notes,
     status: record.status,
     effective_from: record.effective_from,
@@ -201,6 +209,8 @@ export async function POST(request: NextRequest) {
       pvt_price_6_pax,
       pvt_price_8_pax,
       pvt_price_10_pax,
+      sic_provider_id,
+      pvt_provider_id,
       notes
     } = body;
 
@@ -209,8 +219,9 @@ export async function POST(request: NextRequest) {
         tour_id, season_name, start_date, end_date, currency,
         sic_price_2_pax, sic_price_4_pax, sic_price_6_pax, sic_price_8_pax, sic_price_10_pax,
         pvt_price_2_pax, pvt_price_4_pax, pvt_price_6_pax, pvt_price_8_pax, pvt_price_10_pax,
+        sic_provider_id, pvt_provider_id,
         notes, status, effective_from, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 3)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 3)`,
       [
         tour_id, season_name, start_date, end_date, currency,
         fromMinorUnits(sic_price_2_pax.amount_minor),
@@ -223,6 +234,8 @@ export async function POST(request: NextRequest) {
         fromMinorUnits(pvt_price_6_pax.amount_minor),
         fromMinorUnits(pvt_price_8_pax.amount_minor),
         fromMinorUnits(pvt_price_10_pax.amount_minor),
+        sic_provider_id || null,
+        pvt_provider_id || null,
         notes
       ]
     );
@@ -255,5 +268,167 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error('Database error:', error);
     return NextResponse.json({ error: 'Failed to create pricing' }, { status: 500 });
+  }
+}
+
+// PUT - Update pricing record
+export async function PUT(request: NextRequest) {
+  try {
+    const body: any = await request.json();
+    const { id, ...updateData } = body;
+
+    if (!id) {
+      return NextResponse.json({ error: 'ID is required' }, { status: 400 });
+    }
+
+    // Build dynamic UPDATE query
+    const updates: string[] = [];
+    const values: any[] = [];
+
+    if (updateData.season_name !== undefined) {
+      updates.push('season_name = ?');
+      values.push(updateData.season_name);
+    }
+
+    if (updateData.start_date !== undefined) {
+      updates.push('start_date = ?');
+      values.push(updateData.start_date);
+    }
+
+    if (updateData.end_date !== undefined) {
+      updates.push('end_date = ?');
+      values.push(updateData.end_date);
+    }
+
+    if (updateData.currency !== undefined) {
+      updates.push('currency = ?');
+      values.push(updateData.currency);
+    }
+
+    // Handle price fields (expecting raw numbers from frontend)
+    if (updateData.sic_price_2_pax !== undefined) {
+      updates.push('sic_price_2_pax = ?');
+      values.push(updateData.sic_price_2_pax);
+    }
+
+    if (updateData.sic_price_4_pax !== undefined) {
+      updates.push('sic_price_4_pax = ?');
+      values.push(updateData.sic_price_4_pax);
+    }
+
+    if (updateData.sic_price_6_pax !== undefined) {
+      updates.push('sic_price_6_pax = ?');
+      values.push(updateData.sic_price_6_pax);
+    }
+
+    if (updateData.sic_price_8_pax !== undefined) {
+      updates.push('sic_price_8_pax = ?');
+      values.push(updateData.sic_price_8_pax);
+    }
+
+    if (updateData.sic_price_10_pax !== undefined) {
+      updates.push('sic_price_10_pax = ?');
+      values.push(updateData.sic_price_10_pax);
+    }
+
+    if (updateData.pvt_price_2_pax !== undefined) {
+      updates.push('pvt_price_2_pax = ?');
+      values.push(updateData.pvt_price_2_pax);
+    }
+
+    if (updateData.pvt_price_4_pax !== undefined) {
+      updates.push('pvt_price_4_pax = ?');
+      values.push(updateData.pvt_price_4_pax);
+    }
+
+    if (updateData.pvt_price_6_pax !== undefined) {
+      updates.push('pvt_price_6_pax = ?');
+      values.push(updateData.pvt_price_6_pax);
+    }
+
+    if (updateData.pvt_price_8_pax !== undefined) {
+      updates.push('pvt_price_8_pax = ?');
+      values.push(updateData.pvt_price_8_pax);
+    }
+
+    if (updateData.pvt_price_10_pax !== undefined) {
+      updates.push('pvt_price_10_pax = ?');
+      values.push(updateData.pvt_price_10_pax);
+    }
+
+    if (updateData.sic_provider_id !== undefined) {
+      updates.push('sic_provider_id = ?');
+      values.push(updateData.sic_provider_id || null);
+    }
+
+    if (updateData.pvt_provider_id !== undefined) {
+      updates.push('pvt_provider_id = ?');
+      values.push(updateData.pvt_provider_id || null);
+    }
+
+    if (updateData.notes !== undefined) {
+      updates.push('notes = ?');
+      values.push(updateData.notes);
+    }
+
+    if (updateData.status !== undefined) {
+      updates.push('status = ?');
+      values.push(updateData.status);
+    }
+
+    if (updates.length === 0) {
+      return NextResponse.json({ error: 'No fields to update' }, { status: 400 });
+    }
+
+    // Add updated_at timestamp
+    updates.push('updated_at = NOW()');
+
+    // Add id to values array
+    values.push(id);
+
+    await query(
+      `UPDATE tour_pricing SET ${updates.join(', ')} WHERE id = ?`,
+      values
+    );
+
+    // Fetch updated record
+    const updated = await query<TourPricingRecord>(
+      'SELECT * FROM tour_pricing WHERE id = ?',
+      [id]
+    );
+
+    const updatedRecord = updated[0];
+    if (!updatedRecord) {
+      return NextResponse.json({ error: 'Failed to fetch updated record' }, { status: 500 });
+    }
+
+    const responseData = convertToResponse(updatedRecord);
+    return NextResponse.json(responseData);
+  } catch (error) {
+    console.error('Database error:', error);
+    return NextResponse.json({ error: 'Failed to update pricing' }, { status: 500 });
+  }
+}
+
+// DELETE - Soft delete pricing record
+export async function DELETE(request: NextRequest) {
+  try {
+    const body: any = await request.json();
+    const { id } = body;
+
+    if (!id) {
+      return NextResponse.json({ error: 'ID is required' }, { status: 400 });
+    }
+
+    // Soft delete by setting status to archived
+    await query(
+      'UPDATE tour_pricing SET status = ?, updated_at = NOW() WHERE id = ?',
+      ['archived', id]
+    );
+
+    return NextResponse.json({ success: true }, { status: 200 });
+  } catch (error) {
+    console.error('Database error:', error);
+    return NextResponse.json({ error: 'Failed to delete pricing' }, { status: 500 });
   }
 }

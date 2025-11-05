@@ -70,6 +70,13 @@ export async function GET(request: NextRequest) {
       params.push(mealTypeFilter);
     }
 
+    // Provider filter
+    const providerFilter = searchParams.get('provider_id');
+    if (providerFilter && providerFilter !== 'all') {
+      whereConditions.push('mp.provider_id = ?');
+      params.push(parseInt(providerFilter));
+    }
+
     // Build search clause
     const searchTerm = searchParams.get('search');
     if (searchTerm && searchTerm.trim() !== '') {

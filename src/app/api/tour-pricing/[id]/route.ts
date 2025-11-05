@@ -20,6 +20,8 @@ interface TourPricingRecord {
   pvt_price_6_pax: number;
   pvt_price_8_pax: number;
   pvt_price_10_pax: number;
+  sic_provider_id: number | null;
+  pvt_provider_id: number | null;
   notes: string | null;
   status: string;
   effective_from: string;
@@ -44,6 +46,8 @@ interface TourPricingResponse {
   pvt_price_6_pax: Money;
   pvt_price_8_pax: Money;
   pvt_price_10_pax: Money;
+  sic_provider_id: number | null;
+  pvt_provider_id: number | null;
   notes: string | null;
   status: string;
   effective_from: string;
@@ -67,6 +71,8 @@ interface TourPricingPatchInput {
   pvt_price_6_pax?: Money;
   pvt_price_8_pax?: Money;
   pvt_price_10_pax?: Money;
+  sic_provider_id?: number | null;
+  pvt_provider_id?: number | null;
   notes?: string;
   status?: string;
 }
@@ -88,6 +94,8 @@ function convertToResponse(record: TourPricingRecord): TourPricingResponse {
     pvt_price_6_pax: { amount_minor: toMinorUnits(record.pvt_price_6_pax), currency: record.currency },
     pvt_price_8_pax: { amount_minor: toMinorUnits(record.pvt_price_8_pax), currency: record.currency },
     pvt_price_10_pax: { amount_minor: toMinorUnits(record.pvt_price_10_pax), currency: record.currency },
+    sic_provider_id: record.sic_provider_id,
+    pvt_provider_id: record.pvt_provider_id,
     notes: record.notes,
     status: record.status,
     effective_from: record.effective_from,
@@ -218,6 +226,16 @@ export async function PATCH(
     if (body.pvt_price_10_pax !== undefined) {
       updates.push('pvt_price_10_pax = ?');
       values.push(fromMinorUnits(body.pvt_price_10_pax.amount_minor));
+    }
+
+    if (body.sic_provider_id !== undefined) {
+      updates.push('sic_provider_id = ?');
+      values.push(body.sic_provider_id);
+    }
+
+    if (body.pvt_provider_id !== undefined) {
+      updates.push('pvt_provider_id = ?');
+      values.push(body.pvt_provider_id);
     }
 
     if (body.notes !== undefined) {

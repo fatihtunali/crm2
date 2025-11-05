@@ -34,6 +34,7 @@ interface Provider {
   id: number;
   provider_name: string;
   provider_type: string;
+  provider_types?: string[] | string;
 }
 
 interface EditTransferModalProps {
@@ -99,7 +100,8 @@ export default function EditTransferModal({ isOpen, onClose, onSuccess, transfer
   async function fetchProviders() {
     if (organizationId == null) return;
     try {
-      const res = await fetch('/api/providers?include_all=true&limit=1000', {
+      // Only fetch transport providers for transfers
+      const res = await fetch('/api/providers?provider_type=transport&limit=1000', {
         headers: {
           'X-Tenant-Id': organizationId.toString()
         }
@@ -272,11 +274,23 @@ export default function EditTransferModal({ isOpen, onClose, onSuccess, transfer
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                     >
                       <option value="">Not assigned</option>
-                      {providers.map(provider => (
-                        <option key={provider.id} value={provider.id}>
-                          {provider.provider_name} ({provider.provider_type})
-                        </option>
-                      ))}
+                      {providers.map(provider => {
+                        // For multi-type providers, show "Transport" if available, otherwise show primary type
+                        let displayType = provider.provider_type;
+                        if (provider.provider_types) {
+                          const types = typeof provider.provider_types === 'string'
+                            ? JSON.parse(provider.provider_types)
+                            : provider.provider_types;
+                          if (types.includes('transport')) {
+                            displayType = 'transport';
+                          }
+                        }
+                        return (
+                          <option key={provider.id} value={provider.id}>
+                            {provider.provider_name} ({displayType})
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
                   <div>

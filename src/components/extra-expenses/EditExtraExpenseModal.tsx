@@ -69,7 +69,8 @@ export default function EditExtraExpenseModal({ isOpen, onClose, onSuccess, expe
 
   async function fetchProviders() {
     try {
-      const res = await fetch('/api/providers?include_all=true&limit=1000', {
+      // Fetch providers for extra expenses (excludes hotels and guides by default)
+      const res = await fetch('/api/providers?limit=1000', {
         headers: {
           'X-Tenant-Id': organizationId
         }

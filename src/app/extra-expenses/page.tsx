@@ -29,7 +29,7 @@ interface ExtraExpense {
 export default function ExtraExpensesPage() {
   const { organizationId } = useAuth();
   const [expenses, setExpenses] = useState<ExtraExpense[]>([]);
-  const [filteredExpenses, setFilteredExpenses] = useState<ExtraExpense[]>([]);
+  const [allExpenses, setAllExpenses] = useState<ExtraExpense[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
   const [categoryFilter, setCategoryFilter] = useState('all');
@@ -47,16 +47,57 @@ export default function ExtraExpensesPage() {
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
   useEffect(() => {
-    fetchExpenses();
-  }, []);
+    if (organizationId) {
+      fetchAllExpenses();
+    }
+  }, [organizationId]);
 
   useEffect(() => {
-    filterExpenses();
-  }, [expenses, statusFilter, categoryFilter, cityFilter, searchTerm]);
+    if (organizationId) {
+      fetchExpenses();
+    }
+  }, [organizationId, statusFilter, categoryFilter, cityFilter, searchTerm]);
 
-  async function fetchExpenses() {
+  async function fetchAllExpenses() {
     try {
       const res = await fetch('/api/extra-expenses?limit=10000', {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
+      const data = await res.json();
+      const expensesData = Array.isArray(data.data) ? data.data : [];
+      setAllExpenses(expensesData);
+    } catch (error) {
+      console.error('Failed to fetch all extra expenses:', error);
+      setAllExpenses([]);
+    }
+  }
+
+  async function fetchExpenses() {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        limit: '10000',
+      });
+
+      if (statusFilter && statusFilter !== 'all') {
+        params.append('status', statusFilter);
+      }
+
+      if (categoryFilter && categoryFilter !== 'all') {
+        params.append('category', categoryFilter);
+      }
+
+      if (cityFilter && cityFilter !== 'all') {
+        params.append('city', cityFilter);
+      }
+
+      if (searchTerm) {
+        params.append('search', searchTerm);
+      }
+
+      const res = await fetch(`/api/extra-expenses?${params.toString()}`, {
         headers: {
           'X-Tenant-Id': organizationId
         }
@@ -70,31 +111,6 @@ export default function ExtraExpensesPage() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function filterExpenses() {
-    let filtered = expenses;
-
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(e => e.status === statusFilter);
-    }
-
-    if (categoryFilter !== 'all') {
-      filtered = filtered.filter(e => e.expense_category === categoryFilter);
-    }
-
-    if (cityFilter !== 'all') {
-      filtered = filtered.filter(e => e.city === cityFilter);
-    }
-
-    if (searchTerm) {
-      filtered = filtered.filter(e =>
-        e.expense_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        (e.description && e.description.toLowerCase().includes(searchTerm.toLowerCase()))
-      );
-    }
-
-    setFilteredExpenses(filtered);
   }
 
   function handleView(expense: ExtraExpense) {
@@ -150,13 +166,13 @@ export default function ExtraExpensesPage() {
   }
 
   // Get unique categories and cities for filters
-  const categories = Array.from(new Set(expenses.map(e => e.expense_category))).sort();
-  const cities = Array.from(new Set(expenses.map(e => e.city))).sort();
+  const categories = Array.from(new Set(allExpenses.map(e => e.expense_category))).sort();
+  const cities = Array.from(new Set(allExpenses.map(e => e.city))).sort();
 
   const statusCounts = {
-    all: expenses.length,
-    active: expenses.filter(e => e.status === 'active').length,
-    inactive: expenses.filter(e => e.status === 'inactive').length,
+    all: allExpenses.length,
+    active: allExpenses.filter(e => e.status === 'active').length,
+    inactive: allExpenses.filter(e => e.status === 'inactive').length,
   };
 
   return (
@@ -193,13 +209,13 @@ export default function ExtraExpensesPage() {
       {/* Results Summary */}
       <div className="mb-4 flex items-center justify-between">
         <p className="text-sm text-gray-600">
-          Showing <span className="font-semibold">{filteredExpenses.length}</span> of <span className="font-semibold">{expenses.length}</span> extra expenses
+          Showing <span className="font-semibold">{expenses.length}</span> of <span className="font-semibold">{allExpenses.length}</span> extra expenses
         </p>
       </div>
 
       {/* Extra Expenses Table */}
       <ExtraExpenseTable
-        expenses={filteredExpenses}
+        expenses={expenses}
         loading={loading}
         onView={handleView}
         onEdit={handleEdit}

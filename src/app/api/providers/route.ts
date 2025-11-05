@@ -39,102 +39,108 @@ export async function GET(request: NextRequest) {
     // Parse pagination parameters
     const { page, pageSize, offset } = parseStandardPaginationParams(searchParams);
 
-    // Parse filters
-    const filters: Record<string, any> = {
-      organization_id: tenantId // Tenant scoping
-    };
+    // Build WHERE clause manually with proper table prefixes
+    const whereConditions: string[] = [];
+    const params: any[] = [];
+
+    // Tenant scoping (always required)
+    whereConditions.push('p.organization_id = ?');
+    params.push(tenantId);
 
     // Archive filter (default: exclude archived)
     const includeArchived = searchParams.get('include_archived') === 'true';
     if (!includeArchived) {
-      filters.archived_at = null; // Only show non-archived by default
+      whereConditions.push('p.archived_at IS NULL');
     }
-
-    // Exclude hotel and guide providers only if include_all is not set
-    // This allows forms to fetch all providers while the list page filters them
-    const includeAll = searchParams.get('include_all') === 'true';
-    const excludeTypes = includeAll ? [] : ['hotel', 'guide'];
 
     // Status filter
     const statusFilter = searchParams.get('status');
     if (statusFilter && statusFilter !== 'all') {
-      filters.status = statusFilter;
+      whereConditions.push('p.status = ?');
+      params.push(statusFilter);
     }
 
     // City filter
     const cityFilter = searchParams.get('city');
     if (cityFilter && cityFilter !== 'all') {
-      filters.city = cityFilter;
+      whereConditions.push('p.city = ?');
+      params.push(cityFilter);
     }
 
-    // Provider type filter
+    // Provider type filter (check both single type and types array for multi-type providers)
     const providerTypeFilter = searchParams.get('provider_type');
     if (providerTypeFilter && providerTypeFilter !== 'all') {
-      filters.provider_type = providerTypeFilter;
+      whereConditions.push('(p.provider_type = ? OR JSON_CONTAINS(p.provider_types, ?))');
+      params.push(providerTypeFilter, JSON.stringify(providerTypeFilter));
     }
 
-    // Build WHERE clause
-    const whereClause = buildWhereClause(filters);
+    // Exclude hotel and guide providers only if include_all is not set
+    // Check both single type and types array for multi-type providers
+    const includeAll = searchParams.get('include_all') === 'true';
+    if (!includeAll) {
+      whereConditions.push(`(
+        p.provider_type NOT IN ('hotel', 'guide')
+        AND NOT JSON_CONTAINS(p.provider_types, '"hotel"')
+        AND NOT JSON_CONTAINS(p.provider_types, '"guide"')
+      )`);
+    }
 
     // Search across multiple fields
     const searchTerm = searchParams.get('search') || '';
-    const searchClause = buildSearchClause(searchTerm, [
-      'provider_name',
-      'city',
-      'contact_email'
-    ]);
-
-    // Combine WHERE and search
-    const combined = combineWhereAndSearch(whereClause, searchClause);
-
-    // Add exclusion for hotel and guide providers (use inline SQL since buildWhereClause returns inline values)
-    // Only add exclusion if there are types to exclude
-    let finalWhereSQL = combined.whereSQL;
-    if (excludeTypes.length > 0) {
-      const excludeCondition = `provider_type NOT IN ('${excludeTypes.join("', '")}')`;
-      finalWhereSQL = combined.whereSQL
-        ? `(${combined.whereSQL}) AND ${excludeCondition}`
-        : excludeCondition;
+    if (searchTerm) {
+      whereConditions.push('(p.provider_name LIKE ? OR p.city LIKE ? OR p.contact_email LIKE ?)');
+      const searchPattern = `%${searchTerm}%`;
+      params.push(searchPattern, searchPattern, searchPattern);
     }
-    const finalParams = combined.params;
+
+    const finalWhereSQL = whereConditions.join(' AND ');
+    const finalParams = params;
 
     // Default sort order
     const orderBy = 'p.provider_name ASC';
 
-    // Build main query with service counts
+    // Build main query with service counts and parent info
     let sql = `
       SELECT
         p.id,
         p.organization_id,
         p.provider_name,
         p.provider_type,
+        p.provider_types,
         p.city,
         p.contact_email,
         p.contact_phone,
         p.status,
         p.created_at,
         p.updated_at,
+        p.parent_provider_id,
+        p.is_parent,
+        p.company_tax_id,
+        p.company_legal_name,
+        parent.provider_name as parent_company_name,
+        parent.company_legal_name as parent_legal_name,
+        parent.company_tax_id as parent_tax_id,
         (SELECT COUNT(*) FROM tours WHERE provider_id = p.id) as daily_tours_count,
         (SELECT COUNT(*) FROM intercity_transfers WHERE provider_id = p.id) as transfers_count,
         (SELECT COUNT(*) FROM vehicles WHERE provider_id = p.id) as vehicles_count,
         (SELECT COUNT(*) FROM meal_pricing WHERE provider_id = p.id) as restaurants_count,
         (SELECT COUNT(*) FROM entrance_fees WHERE provider_id = p.id) as entrance_fees_count,
-        (SELECT COUNT(*) FROM extra_expenses WHERE provider_id = p.id) as extra_expenses_count
+        (SELECT COUNT(*) FROM extra_expenses WHERE provider_id = p.id) as extra_expenses_count,
+        (SELECT COUNT(*) FROM providers WHERE parent_provider_id = p.id) as child_divisions_count
       FROM providers p
+      LEFT JOIN providers parent ON p.parent_provider_id = parent.id
+      WHERE ${finalWhereSQL}
+      ORDER BY ${orderBy}
+      LIMIT ${pageSize} OFFSET ${offset}
     `;
 
-    if (finalWhereSQL) {
-      sql += ` WHERE ${finalWhereSQL}`;
-    }
-
-    sql += ` ORDER BY ${orderBy}`;
-    sql += ` LIMIT ${pageSize} OFFSET ${offset}`;
-
     // Build count query
-    let countSql = 'SELECT COUNT(*) as total FROM providers';
-    if (finalWhereSQL) {
-      countSql += ` WHERE ${finalWhereSQL}`;
-    }
+    const countSql = `
+      SELECT COUNT(*) as total
+      FROM providers p
+      LEFT JOIN providers parent ON p.parent_provider_id = parent.id
+      WHERE ${finalWhereSQL}
+    `;
 
     // Execute queries in parallel
     const [rows, countResult] = await Promise.all([
@@ -216,12 +222,17 @@ export async function POST(request: NextRequest) {
     const {
       provider_name,
       provider_type,
+      provider_types = null,
       city,
       address,
       contact_email,
       contact_phone,
       notes,
-      status = 'active'
+      status = 'active',
+      is_parent = 0,
+      parent_provider_id = null,
+      company_tax_id = null,
+      company_legal_name = null
     } = body;
 
     // Validate required fields
@@ -233,29 +244,39 @@ export async function POST(request: NextRequest) {
       return validationErrorResponse('Validation failed', errors, requestId);
     }
 
-    // Insert provider with organization_id
+    // Insert provider with organization_id and parent/child fields
     const result = await query(
       `INSERT INTO providers (
         organization_id,
         provider_name,
         provider_type,
+        provider_types,
         city,
         address,
         contact_email,
         contact_phone,
         notes,
-        status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        status,
+        is_parent,
+        parent_provider_id,
+        company_tax_id,
+        company_legal_name
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         tenantId,
         provider_name,
         provider_type,
+        provider_types ? JSON.stringify(provider_types) : JSON.stringify([provider_type]),
         city || null,
         address || null,
         contact_email || null,
         contact_phone || null,
         notes || null,
-        status
+        status,
+        is_parent ? 1 : 0,
+        parent_provider_id || null,
+        company_tax_id || null,
+        company_legal_name || null
       ]
     );
 

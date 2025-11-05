@@ -52,23 +52,31 @@ export async function GET(
       );
     }
 
-    // Fetch provider with tenant scoping
+    // Fetch provider with tenant scoping including parent/child fields
     const [provider] = await query(
       `SELECT
-        id,
-        organization_id,
-        provider_name,
-        provider_type,
-        city,
-        address,
-        contact_email,
-        contact_phone,
-        notes,
-        status,
-        created_at,
-        updated_at
-      FROM providers
-      WHERE id = ? AND organization_id = ?`,
+        p.id,
+        p.organization_id,
+        p.provider_name,
+        p.provider_type,
+        p.provider_types,
+        p.city,
+        p.address,
+        p.contact_email,
+        p.contact_phone,
+        p.notes,
+        p.status,
+        p.created_at,
+        p.updated_at,
+        p.parent_provider_id,
+        p.is_parent,
+        p.company_tax_id,
+        p.company_legal_name,
+        parent.provider_name as parent_company_name,
+        parent.company_legal_name as parent_legal_name
+      FROM providers p
+      LEFT JOIN providers parent ON p.parent_provider_id = parent.id
+      WHERE p.id = ? AND p.organization_id = ?`,
       [providerId, tenantId]
     ) as any[];
 
@@ -172,7 +180,11 @@ export async function PATCH(
       'contact_email',
       'contact_phone',
       'notes',
-      'status'
+      'status',
+      'is_parent',
+      'parent_provider_id',
+      'company_tax_id',
+      'company_legal_name'
     ];
 
     const updates: string[] = [];
@@ -183,6 +195,12 @@ export async function PATCH(
         updates.push(`${field} = ?`);
         values.push(body[field]);
       }
+    }
+
+    // Handle provider_types separately (JSON field)
+    if (body.provider_types !== undefined) {
+      updates.push('provider_types = ?');
+      values.push(JSON.stringify(body.provider_types));
     }
 
     if (updates.length === 0) {

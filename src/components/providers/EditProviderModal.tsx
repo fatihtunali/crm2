@@ -14,6 +14,16 @@ interface Provider {
   status: string;
   created_at: string;
   updated_at: string;
+  parent_provider_id?: number | null;
+  is_parent?: number;
+  company_tax_id?: string | null;
+  company_legal_name?: string | null;
+}
+
+interface ParentProvider {
+  id: number;
+  provider_name: string;
+  company_legal_name: string | null;
 }
 
 interface EditProviderModalProps {
@@ -29,31 +39,79 @@ export default function EditProviderModal({ isOpen, onClose, onSuccess, provider
     id: 0,
     provider_name: '',
     provider_type: 'hotel',
+    provider_types: ['hotel'] as string[],
     city: '',
     address: '',
     contact_email: '',
     contact_phone: '',
     notes: '',
-    status: 'active'
+    status: 'active',
+    is_parent: false,
+    parent_provider_id: '',
+    company_tax_id: '',
+    company_legal_name: ''
   });
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
+  const [parentProviders, setParentProviders] = useState<ParentProvider[]>([]);
+
+  // Fetch parent providers
+  useEffect(() => {
+    if (isOpen) {
+      fetchParentProviders();
+    }
+  }, [isOpen]);
 
   useEffect(() => {
     if (provider) {
+      // Parse provider_types if it exists, otherwise use single provider_type
+      let types: string[] = [];
+      if ((provider as any).provider_types) {
+        try {
+          types = typeof (provider as any).provider_types === 'string'
+            ? JSON.parse((provider as any).provider_types)
+            : (provider as any).provider_types;
+        } catch {
+          types = [provider.provider_type];
+        }
+      } else {
+        types = [provider.provider_type];
+      }
+
       setFormData({
         id: provider.id,
         provider_name: provider.provider_name,
         provider_type: provider.provider_type,
+        provider_types: types,
         city: provider.city || '',
         address: provider.address || '',
         contact_email: provider.contact_email || '',
         contact_phone: provider.contact_phone || '',
         notes: provider.notes || '',
-        status: provider.status
+        status: provider.status,
+        is_parent: provider.is_parent === 1,
+        parent_provider_id: provider.parent_provider_id ? provider.parent_provider_id.toString() : '',
+        company_tax_id: provider.company_tax_id || '',
+        company_legal_name: provider.company_legal_name || ''
       });
     }
   }, [provider]);
+
+  const fetchParentProviders = async () => {
+    try {
+      const res = await fetch('/api/providers?include_all=true&limit=1000', {
+        headers: { 'X-Tenant-Id': organizationId }
+      });
+      if (res.ok) {
+        const data = await res.json();
+        // Filter to only show parent companies (excluding current provider)
+        const parents = data.data.filter((p: any) => p.is_parent === 1 && p.id !== provider?.id);
+        setParentProviders(parents);
+      }
+    } catch (error) {
+      console.error('Failed to fetch parent providers:', error);
+    }
+  };
 
   if (!isOpen || !provider) return null;
 
@@ -87,12 +145,17 @@ export default function EditProviderModal({ isOpen, onClose, onSuccess, provider
         body: JSON.stringify({
           provider_name: formData.provider_name,
           provider_type: formData.provider_type,
+          provider_types: formData.provider_types,
           city: formData.city || null,
           address: formData.address || null,
           contact_email: formData.contact_email || null,
           contact_phone: formData.contact_phone || null,
           notes: formData.notes || null,
-          status: formData.status
+          status: formData.status,
+          is_parent: formData.is_parent ? 1 : 0,
+          parent_provider_id: formData.parent_provider_id ? parseInt(formData.parent_provider_id) : null,
+          company_tax_id: formData.company_tax_id || null,
+          company_legal_name: formData.company_legal_name || null
         })
       });
 
@@ -143,25 +206,65 @@ export default function EditProviderModal({ isOpen, onClose, onSuccess, provider
                       required
                     />
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Provider Type <span className="text-red-500">*</span>
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-gray-700 mb-2">
+                      Provider Type{formData.is_parent ? 's' : ''} <span className="text-red-500">*</span>
                     </label>
-                    <select
-                      value={formData.provider_type}
-                      onChange={(e) => handleFormChange('provider_type', e.target.value)}
-                      className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                      required
-                    >
-                      <option value="hotel">Hotel</option>
-                      <option value="tour_operator">Tour Operator</option>
-                      <option value="transport">Transport</option>
-                      <option value="restaurant">Restaurant</option>
-                      <option value="government">Government</option>
-                      <option value="guide">Guide</option>
-                      <option value="entrance_fee">Entrance Fee</option>
-                      <option value="other">Other</option>
-                    </select>
+                    {formData.is_parent ? (
+                      <div className="space-y-2 p-3 border border-gray-200 rounded-lg bg-gray-50">
+                        <p className="text-xs text-gray-600 mb-2">Select all services this parent company provides:</p>
+                        {[
+                          { value: 'tour_operator', label: 'Tour Operator' },
+                          { value: 'transport', label: 'Transport' },
+                          { value: 'restaurant', label: 'Restaurant' },
+                          { value: 'government', label: 'Government' },
+                          { value: 'entrance_fee', label: 'Entrance Fee' },
+                          { value: 'other', label: 'Other' }
+                        ].map(type => (
+                          <label key={type.value} className="flex items-center space-x-2 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={formData.provider_types.includes(type.value)}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  handleFormChange('provider_types', [...formData.provider_types, type.value]);
+                                  if (formData.provider_types.length === 0) {
+                                    handleFormChange('provider_type', type.value);
+                                  }
+                                } else {
+                                  const newTypes = formData.provider_types.filter(t => t !== type.value);
+                                  handleFormChange('provider_types', newTypes);
+                                  if (newTypes.length > 0 && formData.provider_type === type.value) {
+                                    handleFormChange('provider_type', newTypes[0]);
+                                  }
+                                }
+                              }}
+                              className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                            />
+                            <span className="text-sm text-gray-700">{type.label}</span>
+                          </label>
+                        ))}
+                      </div>
+                    ) : (
+                      <select
+                        value={formData.provider_type}
+                        onChange={(e) => {
+                          handleFormChange('provider_type', e.target.value);
+                          handleFormChange('provider_types', [e.target.value]);
+                        }}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                        required
+                      >
+                        <option value="hotel">Hotel</option>
+                        <option value="tour_operator">Tour Operator</option>
+                        <option value="transport">Transport</option>
+                        <option value="restaurant">Restaurant</option>
+                        <option value="government">Government</option>
+                        <option value="guide">Guide</option>
+                        <option value="entrance_fee">Entrance Fee</option>
+                        <option value="other">Other</option>
+                      </select>
+                    )}
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-gray-700 mb-1">City</label>
@@ -213,8 +316,91 @@ export default function EditProviderModal({ isOpen, onClose, onSuccess, provider
                 </div>
               </div>
 
+              {/* Company Structure */}
+              <div className="border-t border-gray-200 pt-4">
+                <h3 className="text-lg font-semibold text-gray-900 mb-3">Company Structure</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="md:col-span-2">
+                    <label className="flex items-center space-x-2 cursor-pointer">
+                      <input
+                        type="checkbox"
+                        checked={formData.is_parent}
+                        onChange={(e) => {
+                          handleFormChange('is_parent', e.target.checked);
+                          if (e.target.checked) {
+                            handleFormChange('parent_provider_id', '');
+                          }
+                        }}
+                        className="rounded border-gray-300 text-primary-600 focus:ring-primary-500"
+                      />
+                      <span className="text-sm font-medium text-gray-700">
+                        📁 This is a parent company (has multiple divisions)
+                      </span>
+                    </label>
+                  </div>
+
+                  {!formData.is_parent && parentProviders.length > 0 && (
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-gray-700 mb-1">
+                        Parent Company (Optional)
+                      </label>
+                      <select
+                        value={formData.parent_provider_id}
+                        onChange={(e) => handleFormChange('parent_provider_id', e.target.value)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                      >
+                        <option value="">None - Independent Provider</option>
+                        {parentProviders.map(parent => (
+                          <option key={parent.id} value={parent.id}>
+                            {parent.provider_name} {parent.company_legal_name && `(${parent.company_legal_name})`}
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Select if this provider is a division of a larger company
+                      </p>
+                    </div>
+                  )}
+
+                  {formData.is_parent && (
+                    <>
+                      <div className="md:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Legal Company Name
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.company_legal_name}
+                          onChange={(e) => handleFormChange('company_legal_name', e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                          placeholder="e.g., Acme Travel Services Ltd."
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          Official legal name for contracts and invoices
+                        </p>
+                      </div>
+                      <div className="md:col-span-2">
+                        <label className="block text-sm font-medium text-gray-700 mb-1">
+                          Tax ID / VAT Number
+                        </label>
+                        <input
+                          type="text"
+                          value={formData.company_tax_id}
+                          onChange={(e) => handleFormChange('company_tax_id', e.target.value)}
+                          className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                          placeholder="e.g., TR1234567890"
+                        />
+                        <p className="text-xs text-gray-500 mt-1">
+                          Tax identification number for billing
+                        </p>
+                      </div>
+                    </>
+                  )}
+                </div>
+              </div>
+
               {/* Additional Information */}
-              <div>
+              <div className="border-t border-gray-200 pt-4">
                 <h3 className="text-lg font-semibold text-gray-900 mb-3">Additional Information</h3>
                 <div className="grid grid-cols-1 gap-4">
                   <div>

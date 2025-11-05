@@ -51,7 +51,7 @@ interface TourPackage {
 export default function TourPackagesPage() {
   const { organizationId } = useAuth();
   const [packages, setPackages] = useState<TourPackage[]>([]);
-  const [filteredPackages, setFilteredPackages] = useState<TourPackage[]>([]);
+  const [allPackages, setAllPackages] = useState<TourPackage[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
   const [tourTypeFilter, setTourTypeFilter] = useState('all');
@@ -70,14 +70,18 @@ export default function TourPackagesPage() {
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
   useEffect(() => {
-    fetchPackages();
-  }, []);
+    if (organizationId) {
+      fetchAllPackages();
+    }
+  }, [organizationId]);
 
   useEffect(() => {
-    filterPackages();
-  }, [packages, statusFilter, tourTypeFilter, cityFilter, searchTerm]);
+    if (organizationId) {
+      fetchPackages();
+    }
+  }, [organizationId, statusFilter, tourTypeFilter, cityFilter, searchTerm]);
 
-  async function fetchPackages() {
+  async function fetchAllPackages() {
     try {
       const res = await fetch('/api/daily-tours?limit=10000', {
         headers: {
@@ -85,7 +89,42 @@ export default function TourPackagesPage() {
         }
       });
       const data = await res.json();
-      // Ensure data.data is always an array
+      setAllPackages(Array.isArray(data.data) ? data.data : []);
+    } catch (error) {
+      console.error('Failed to fetch all daily tours:', error);
+      setAllPackages([]);
+    }
+  }
+
+  async function fetchPackages() {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        limit: '10000',
+      });
+
+      if (statusFilter && statusFilter !== 'all') {
+        params.append('status', statusFilter);
+      }
+
+      if (tourTypeFilter && tourTypeFilter !== 'all') {
+        params.append('tour_type', tourTypeFilter);
+      }
+
+      if (cityFilter && cityFilter !== 'all') {
+        params.append('city', cityFilter);
+      }
+
+      if (searchTerm) {
+        params.append('search', searchTerm);
+      }
+
+      const res = await fetch(`/api/daily-tours?${params.toString()}`, {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
+      const data = await res.json();
       setPackages(Array.isArray(data.data) ? data.data : []);
     } catch (error) {
       console.error('Failed to fetch daily tours:', error);
@@ -93,32 +132,6 @@ export default function TourPackagesPage() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function filterPackages() {
-    let filtered = packages;
-
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(p => p.status === statusFilter);
-    }
-
-    if (tourTypeFilter !== 'all') {
-      filtered = filtered.filter(p => p.tour_type === tourTypeFilter);
-    }
-
-    if (cityFilter !== 'all') {
-      filtered = filtered.filter(p => p.city === cityFilter);
-    }
-
-    if (searchTerm) {
-      filtered = filtered.filter(p =>
-        p.tour_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.tour_code.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        p.city.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-    }
-
-    setFilteredPackages(filtered);
   }
 
   function handleView(pkg: TourPackage) {
@@ -178,13 +191,13 @@ export default function TourPackagesPage() {
   }
 
   const statusCounts = {
-    all: packages.length,
-    active: packages.filter(p => p.status === 'active').length,
-    inactive: packages.filter(p => p.status === 'inactive').length,
+    all: allPackages.length,
+    active: allPackages.filter(p => p.status === 'active').length,
+    inactive: allPackages.filter(p => p.status === 'inactive').length,
   };
 
   // Get unique cities for filter
-  const cities = Array.from(new Set(packages.map(p => p.city))).sort();
+  const cities = Array.from(new Set(allPackages.map(p => p.city))).sort();
 
   return (
     <div className="p-8">
@@ -219,13 +232,13 @@ export default function TourPackagesPage() {
       {/* Results Summary */}
       <div className="mb-4 flex items-center justify-between">
         <p className="text-sm text-gray-600">
-          Showing <span className="font-semibold">{filteredPackages.length}</span> of <span className="font-semibold">{packages.length}</span> daily tours
+          Showing <span className="font-semibold">{packages.length}</span> of <span className="font-semibold">{allPackages.length}</span> daily tours
         </p>
       </div>
 
       {/* Tour Packages Table */}
       <TourPackageTable
-        packages={filteredPackages}
+        packages={packages}
         loading={loading}
         onView={handleView}
         onEdit={handleEdit}

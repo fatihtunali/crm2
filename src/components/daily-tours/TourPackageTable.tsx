@@ -36,6 +36,10 @@ interface TourPackage {
   pvt_price_6_pax: number | null;
   pvt_price_8_pax: number | null;
   pvt_price_10_pax: number | null;
+  sic_provider_id: number | null;
+  sic_provider_name: string | null;
+  pvt_provider_id: number | null;
+  pvt_provider_name: string | null;
 }
 
 interface TourPackageTableProps {
@@ -243,6 +247,9 @@ export default function TourPackageTable({
                               <div className="bg-blue-50 px-4 py-2 border-b border-blue-200">
                                 <h5 className="text-sm font-semibold text-blue-900">SIC (Seat-in-Coach) Pricing</h5>
                                 <p className="text-xs text-blue-600">Shared tour - price per person</p>
+                                {pkg.sic_provider_name && (
+                                  <p className="text-xs text-blue-700 mt-1 font-medium">Operator: {pkg.sic_provider_name}</p>
+                                )}
                               </div>
                               <table className="w-full text-sm">
                                 <thead className="bg-gray-50">
@@ -280,7 +287,10 @@ export default function TourPackageTable({
                             <div className="bg-white rounded-lg border border-purple-200 overflow-hidden">
                               <div className="bg-purple-50 px-4 py-2 border-b border-purple-200">
                                 <h5 className="text-sm font-semibold text-purple-900">Private Tour Pricing</h5>
-                                <p className="text-xs text-purple-600">Exclusive tour - total price for group</p>
+                                <p className="text-xs text-purple-600">Per person rate by group size</p>
+                                {pkg.pvt_provider_name && (
+                                  <p className="text-xs text-purple-700 mt-1 font-medium">Operator: {pkg.pvt_provider_name}</p>
+                                )}
                               </div>
                               <table className="w-full text-sm">
                                 <thead className="bg-gray-50">

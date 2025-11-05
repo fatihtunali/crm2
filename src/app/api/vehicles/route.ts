@@ -106,6 +106,13 @@ export async function GET(request: NextRequest) {
       params.push(vehicleType);
     }
 
+    // Provider filter
+    const providerFilter = searchParams.get('provider_id');
+    if (providerFilter && providerFilter !== 'all') {
+      whereConditions.push('v.provider_id = ?');
+      params.push(parseInt(providerFilter));
+    }
+
     // Build search clause
     const searchTerm = searchParams.get('search');
     if (searchTerm && searchTerm.trim() !== '') {

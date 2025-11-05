@@ -33,6 +33,7 @@ const navigation = [
       { name: 'Guides', href: '/guides', icon: '👨‍🏫' },
       { name: 'Entrance Fees', href: '/entrance-fees', icon: '🎫' },
       { name: 'Restaurants', href: '/restaurants', icon: '🍽️' },
+      { name: 'Flights', href: '/flights', icon: '✈️' },
       { name: 'Extra Expenses', href: '/extra-expenses', icon: '💵' },
     ]
   },

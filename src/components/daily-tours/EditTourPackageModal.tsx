@@ -27,6 +27,7 @@ interface Provider {
   id: number;
   provider_name: string;
   provider_type: string;
+  provider_types?: string[] | string;
 }
 
 interface EditTourPackageModalProps {
@@ -95,7 +96,8 @@ export default function EditTourPackageModal({ isOpen, onClose, onSuccess, tourP
 
   async function fetchProviders() {
     try {
-      const res = await fetch('/api/providers?include_all=true', {
+      // Only fetch tour operators for daily tours
+      const res = await fetch('/api/providers?provider_type=tour_operator&limit=1000', {
         headers: {
           'X-Tenant-Id': organizationId
         }
@@ -217,11 +219,23 @@ export default function EditTourPackageModal({ isOpen, onClose, onSuccess, tourP
                       className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                     >
                       <option value="">Not assigned</option>
-                      {providers.map(provider => (
-                        <option key={provider.id} value={provider.id}>
-                          {provider.provider_name} ({provider.provider_type})
-                        </option>
-                      ))}
+                      {providers.map(provider => {
+                        // For multi-type providers, show "Tour Operator" if available, otherwise show primary type
+                        let displayType = provider.provider_type;
+                        if (provider.provider_types) {
+                          const types = typeof provider.provider_types === 'string'
+                            ? JSON.parse(provider.provider_types)
+                            : provider.provider_types;
+                          if (types.includes('tour_operator')) {
+                            displayType = 'tour_operator';
+                          }
+                        }
+                        return (
+                          <option key={provider.id} value={provider.id}>
+                            {provider.provider_name} ({displayType})
+                          </option>
+                        );
+                      })}
                     </select>
                   </div>
                   <div className="md:col-span-2">

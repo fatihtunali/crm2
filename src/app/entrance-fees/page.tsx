@@ -42,7 +42,7 @@ interface EntranceFee {
 export default function EntranceFeesPage() {
   const { organizationId } = useAuth();
   const [fees, setFees] = useState<EntranceFee[]>([]);
-  const [filteredFees, setFilteredFees] = useState<EntranceFee[]>([]);
+  const [allFees, setAllFees] = useState<EntranceFee[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
   const [cityFilter, setCityFilter] = useState('all');
@@ -60,14 +60,18 @@ export default function EntranceFeesPage() {
   const [deleteSubmitting, setDeleteSubmitting] = useState(false);
 
   useEffect(() => {
-    fetchFees();
-  }, []);
+    if (organizationId) {
+      fetchAllFees();
+    }
+  }, [organizationId]);
 
   useEffect(() => {
-    filterFees();
-  }, [fees, statusFilter, cityFilter, searchTerm]);
+    if (organizationId) {
+      fetchFees();
+    }
+  }, [organizationId, statusFilter, cityFilter, searchTerm]);
 
-  async function fetchFees() {
+  async function fetchAllFees() {
     try {
       const res = await fetch('/api/entrance-fees?limit=10000', {
         headers: {
@@ -75,8 +79,39 @@ export default function EntranceFeesPage() {
         }
       });
       const data = await res.json();
+      const feesData = Array.isArray(data.data) ? data.data : [];
+      setAllFees(feesData);
+    } catch (error) {
+      console.error('Failed to fetch all entrance fees:', error);
+      setAllFees([]);
+    }
+  }
 
-      // Handle paged response format
+  async function fetchFees() {
+    setLoading(true);
+    try {
+      const params = new URLSearchParams({
+        limit: '10000',
+      });
+
+      if (statusFilter && statusFilter !== 'all') {
+        params.append('status', statusFilter);
+      }
+
+      if (cityFilter && cityFilter !== 'all') {
+        params.append('city', cityFilter);
+      }
+
+      if (searchTerm) {
+        params.append('search', searchTerm);
+      }
+
+      const res = await fetch(`/api/entrance-fees?${params.toString()}`, {
+        headers: {
+          'X-Tenant-Id': organizationId
+        }
+      });
+      const data = await res.json();
       const feesData = Array.isArray(data.data) ? data.data : [];
       setFees(feesData);
     } catch (error) {
@@ -85,27 +120,6 @@ export default function EntranceFeesPage() {
     } finally {
       setLoading(false);
     }
-  }
-
-  function filterFees() {
-    let filtered = fees;
-
-    if (statusFilter !== 'all') {
-      filtered = filtered.filter(f => f.status === statusFilter);
-    }
-
-    if (cityFilter !== 'all') {
-      filtered = filtered.filter(f => f.city === cityFilter);
-    }
-
-    if (searchTerm) {
-      filtered = filtered.filter(f =>
-        f.site_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-        f.city.toLowerCase().includes(searchTerm.toLowerCase())
-      );
-    }
-
-    setFilteredFees(filtered);
   }
 
   function handleView(fee: EntranceFee) {
@@ -171,13 +185,13 @@ export default function EntranceFeesPage() {
   }
 
   const statusCounts = {
-    all: fees.length,
-    active: fees.filter(f => f.status === 'active').length,
-    inactive: fees.filter(f => f.status === 'inactive').length,
+    all: allFees.length,
+    active: allFees.filter(f => f.status === 'active').length,
+    inactive: allFees.filter(f => f.status === 'inactive').length,
   };
 
   // Get unique cities for filter
-  const cities = Array.from(new Set(fees.map(f => f.city))).sort();
+  const cities = Array.from(new Set(allFees.map(f => f.city))).sort();
 
   return (
     <div className="p-8">
@@ -210,13 +224,13 @@ export default function EntranceFeesPage() {
       {/* Results Summary */}
       <div className="mb-4 flex items-center justify-between">
         <p className="text-sm text-gray-600">
-          Showing <span className="font-semibold">{filteredFees.length}</span> of <span className="font-semibold">{fees.length}</span> entrance fees
+          Showing <span className="font-semibold">{fees.length}</span> of <span className="font-semibold">{allFees.length}</span> entrance fees
         </p>
       </div>
 
       {/* Entrance Fees Table */}
       <EntranceFeeTable
-        fees={filteredFees}
+        fees={fees}
         loading={loading}
         onView={handleView}
         onEdit={handleEdit}

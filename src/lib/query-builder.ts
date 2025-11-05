@@ -83,8 +83,8 @@ export function buildWhereClause(
       continue;
     }
 
-    // Sanitize field name - only allow alphanumeric and underscores
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(key)) {
+    // Sanitize field name - allow alphanumeric, underscores, and dots for table-qualified names (e.g., h.hotel_name)
+    if (!/^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(key)) {
       console.warn(`Invalid filter field name: ${key}`);
       continue;
     }
@@ -93,8 +93,8 @@ export function buildWhereClause(
     if (key.endsWith('_min')) {
       const baseField = key.slice(0, -4); // Remove '_min'
       if (!processedRangeFields.has(baseField)) {
-        // Sanitize base field name
-        if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(baseField)) {
+        // Sanitize base field name - allow table-qualified names
+        if (!/^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(baseField)) {
           console.warn(`Invalid base field name: ${baseField}`);
           continue;
         }
@@ -225,8 +225,8 @@ export function buildSearchClause(
   const searchValue = `%${searchTerm}%`;
 
   for (const field of fields) {
-    // Sanitize field name - only allow alphanumeric and underscores
-    if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(field)) {
+    // Sanitize field name - allow alphanumeric, underscores, and dots for table-qualified names (e.g., h.hotel_name)
+    if (!/^[a-zA-Z_][a-zA-Z0-9_.]*$/.test(field)) {
       console.warn(`Invalid search field name: ${field}`);
       continue;
     }

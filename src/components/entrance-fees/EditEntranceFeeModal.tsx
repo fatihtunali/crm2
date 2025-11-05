@@ -89,7 +89,8 @@ export default function EditEntranceFeeModal({ isOpen, onClose, onSuccess, entra
 
   async function fetchProviders() {
     try {
-      const res = await fetch('/api/providers?include_all=true&limit=1000', {
+      // Fetch providers for entrance fees (excludes hotels and guides by default)
+      const res = await fetch('/api/providers?limit=1000', {
         headers: {
           'X-Tenant-Id': organizationId
         }

@@ -38,8 +38,8 @@ export async function GET(request: NextRequest) {
     // Parse pagination parameters
     const { page, pageSize, offset } = parseStandardPaginationParams(searchParams);
 
-    // Default sort order
-    const orderByClause = 'mp.restaurant_name ASC, mp.season_name ASC';
+    // Default sort order - favorites first
+    const orderByClause = 'mp.favorite_priority DESC, mp.restaurant_name ASC, mp.season_name ASC';
 
     // Build WHERE conditions manually with table qualifiers
     const whereConditions: string[] = [];

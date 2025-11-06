@@ -3,6 +3,8 @@ import { query } from '@/lib/db';
 import { parsePaginationParams, parseSortParams, buildPagedResponse } from '@/lib/pagination';
 import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
 import { toMinorUnits, fromMinorUnits } from '@/lib/money';
+import { checkSeasonOverlap, validatePricingData } from '@/lib/pricing-validation';
+import { requirePermission } from '@/middleware/permissions';
 import type { Money, PagedResponse } from '@/types/api';
 
 interface TourPricingRecord {
@@ -182,7 +184,14 @@ export async function GET(request: NextRequest) {
 // POST - Create new pricing record
 export async function POST(request: NextRequest) {
   try {
-    // Check for idempotency key
+    // 1. Authenticate and get user
+    const authResult = await requirePermission(request, 'pricing', 'create');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user } = authResult;
+
+    // 2. Check for idempotency key
     const idempotencyKey = request.headers.get('Idempotency-Key');
 
     if (idempotencyKey) {
@@ -214,6 +223,31 @@ export async function POST(request: NextRequest) {
       notes
     } = body;
 
+    // Validate pricing data format
+    const validation = validatePricingData({ start_date, end_date, season_name });
+    if (!validation.valid) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
+
+    // Check for season overlaps
+    const overlapResult = await checkSeasonOverlap(
+      'tour_pricing',
+      'tour_id',
+      tour_id,
+      start_date,
+      end_date
+    );
+
+    if (overlapResult.hasOverlap) {
+      return NextResponse.json(
+        {
+          error: overlapResult.message,
+          conflicting_seasons: overlapResult.conflictingSeasons
+        },
+        { status: 409 }
+      );
+    }
+
     const result = await query(
       `INSERT INTO tour_pricing (
         tour_id, season_name, start_date, end_date, currency,
@@ -221,7 +255,7 @@ export async function POST(request: NextRequest) {
         pvt_price_2_pax, pvt_price_4_pax, pvt_price_6_pax, pvt_price_8_pax, pvt_price_10_pax,
         sic_provider_id, pvt_provider_id,
         notes, status, effective_from, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 3)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), ?)`,
       [
         tour_id, season_name, start_date, end_date, currency,
         fromMinorUnits(sic_price_2_pax.amount_minor),
@@ -236,7 +270,8 @@ export async function POST(request: NextRequest) {
         fromMinorUnits(pvt_price_10_pax.amount_minor),
         sic_provider_id || null,
         pvt_provider_id || null,
-        notes
+        notes,
+        user.userId
       ]
     );
 
@@ -279,6 +314,51 @@ export async function PUT(request: NextRequest) {
 
     if (!id) {
       return NextResponse.json({ error: 'ID is required' }, { status: 400 });
+    }
+
+    // If dates are being updated, validate for overlaps
+    if (updateData.start_date !== undefined || updateData.end_date !== undefined || updateData.tour_id !== undefined) {
+      // Fetch existing record to get current values
+      const existing = await query<TourPricingRecord>(
+        'SELECT * FROM tour_pricing WHERE id = ?',
+        [id]
+      );
+
+      if (existing.length === 0) {
+        return NextResponse.json({ error: 'Record not found' }, { status: 404 });
+      }
+
+      const current = existing[0];
+      const tourId = updateData.tour_id !== undefined ? updateData.tour_id : current.tour_id;
+      const startDate = updateData.start_date !== undefined ? updateData.start_date : current.start_date;
+      const endDate = updateData.end_date !== undefined ? updateData.end_date : current.end_date;
+      const seasonName = updateData.season_name !== undefined ? updateData.season_name : current.season_name;
+
+      // Validate pricing data format
+      const validation = validatePricingData({ start_date: startDate, end_date: endDate, season_name: seasonName });
+      if (!validation.valid) {
+        return NextResponse.json({ error: validation.error }, { status: 400 });
+      }
+
+      // Check for season overlaps (excluding current record)
+      const overlapResult = await checkSeasonOverlap(
+        'tour_pricing',
+        'tour_id',
+        tourId,
+        startDate,
+        endDate,
+        id // Exclude this record from overlap check
+      );
+
+      if (overlapResult.hasOverlap) {
+        return NextResponse.json(
+          {
+            error: overlapResult.message,
+            conflicting_seasons: overlapResult.conflictingSeasons
+          },
+          { status: 409 }
+        );
+      }
     }
 
     // Build dynamic UPDATE query

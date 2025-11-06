@@ -78,7 +78,7 @@ export async function GET(request: NextRequest) {
     // Archive filter (Phase 3: default exclude archived)
     const includeArchived = searchParams.get('include_archived') === 'true';
     if (!includeArchived) {
-      filters.archived_at = null;
+      filters['g.archived_at'] = null;
     }
 
     if (statusFilter && statusFilter !== 'all') {
@@ -96,36 +96,65 @@ export async function GET(request: NextRequest) {
     // 5. Parse search
     const searchTerm = searchParams.get('search') || searchParams.get('q') || '';
 
-    // 6. Parse sort (default: city ASC, language ASC)
-    const sortParam = searchParams.get('sort') || 'city,language';
+    // 6. Parse sort (default: favorites first, then city ASC, language ASC)
+    const sortParam = searchParams.get('sort') || '-favorite_priority,city,language';
     // SECURITY: Whitelist allowed columns
-    const ALLOWED_COLUMNS = ['id', 'city', 'language', 'status', 'created_at', 'updated_at'];
-    const orderBy = parseSortParams(sortParam, ALLOWED_COLUMNS) || 'g.city ASC, g.language ASC';
+    const ALLOWED_COLUMNS = ['id', 'city', 'language', 'status', 'created_at', 'updated_at', 'favorite_priority'];
+    const orderBy = parseSortParams(sortParam, ALLOWED_COLUMNS) || 'g.favorite_priority DESC, g.city ASC, g.language ASC';
 
-    // 7. Build WHERE clause
-    const whereClause = buildWhereClause(filters);
+    // 7. Build WHERE conditions manually
+    const whereConditions: string[] = [];
+    const params: any[] = [];
+
+    // Always filter by organization (tenant)
+    whereConditions.push('g.organization_id = ?');
+    params.push(parseInt(tenantId));
+
+    // Archive filter
+    if (!includeArchived) {
+      whereConditions.push('g.archived_at IS NULL');
+    }
+
+    // Status filter
+    if (statusFilter && statusFilter !== 'all') {
+      whereConditions.push('g.status = ?');
+      params.push(statusFilter);
+    }
+
+    // City filter
+    if (cityFilter && cityFilter !== 'all') {
+      whereConditions.push('g.city = ?');
+      params.push(cityFilter);
+    }
+
+    // Language filter
+    if (languageFilter && languageFilter !== 'all') {
+      whereConditions.push('g.language = ?');
+      params.push(languageFilter);
+    }
 
     // 8. Build search clause
-    const searchClause = buildSearchClause(searchTerm, [
-      'g.city',
-      'g.language',
-      'g.description',
-    ]);
+    if (searchTerm && searchTerm.trim() !== '') {
+      whereConditions.push('(g.city LIKE ? OR g.language LIKE ? OR g.description LIKE ?)');
+      const searchValue = `%${searchTerm}%`;
+      params.push(searchValue, searchValue, searchValue);
+    }
 
-    // 9. Build main query
-    const baseQuery = `
+    const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : '';
+
+    // 9. Build main query with GROUP BY to prevent duplicates from pricing join
+    let sql = `
       SELECT
         g.*,
         p.provider_name,
-        p.id as provider_id,
-        gp.id as pricing_id,
-        gp.season_name,
-        gp.start_date as season_start,
-        gp.end_date as season_end,
-        gp.currency,
-        gp.full_day_price,
-        gp.half_day_price,
-        gp.night_price
+        MAX(gp.id) as pricing_id,
+        MAX(gp.season_name) as season_name,
+        MAX(gp.start_date) as season_start,
+        MAX(gp.end_date) as season_end,
+        MAX(gp.currency) as currency,
+        MAX(gp.full_day_price) as full_day_price,
+        MAX(gp.half_day_price) as half_day_price,
+        MAX(gp.night_price) as night_price
       FROM guides g
       LEFT JOIN providers p ON g.provider_id = p.id
       LEFT JOIN guide_pricing gp ON g.id = gp.guide_id
@@ -133,23 +162,33 @@ export async function GET(request: NextRequest) {
         AND CURDATE() BETWEEN gp.start_date AND gp.end_date
     `;
 
-    const { sql, params } = buildQuery(baseQuery, {
-      where: whereClause,
-      search: searchClause,
-      orderBy,
-      limit: pageSize,
-      offset,
-    });
+    // Add WHERE clause
+    if (whereClause) {
+      sql += ` WHERE ${whereClause}`;
+    }
+
+    // Add GROUP BY to eliminate duplicates from pricing join
+    sql += ` GROUP BY g.id, p.provider_name`;
+
+    // Add ORDER BY, LIMIT, OFFSET
+    sql += ` ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
+    params.push(pageSize, offset);
 
     // 10. Execute query
     const rows = await query(sql, params);
 
-    // 11. Get total count
-    const countBaseQuery = 'SELECT COUNT(DISTINCT g.id) as count FROM guides g';
-    const { sql: countSql, params: countParams } = buildQuery(countBaseQuery, {
-      where: whereClause,
-      search: searchClause,
-    });
+    // 11. Build count query
+    let countSql = `
+      SELECT COUNT(DISTINCT g.id) as count
+      FROM guides g
+    `;
+
+    if (whereClause) {
+      countSql += ` WHERE ${whereClause}`;
+    }
+
+    // Build count params (without pagination params)
+    const countParams = params.slice(0, -2);
 
     const countResult = await query(countSql, countParams) as any[];
     const total = countResult[0]?.count || 0;
@@ -308,7 +347,7 @@ export async function POST(request: NextRequest) {
 
     // 6. Insert guide
     const insertFields = [
-      'organization_id', 'city', 'language', 'description', 'provider_id', 'status'
+      'organization_id', 'city', 'language', 'description', 'provider_id', 'status', 'favorite_priority'
     ];
 
     const insertValues = [
@@ -318,6 +357,7 @@ export async function POST(request: NextRequest) {
       description || null,
       provider_id || null,
       status,
+      body.favorite_priority || 0,
     ];
 
     // Add idempotency_key if provided
@@ -447,6 +487,18 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    // Validate favorite_priority if provided
+    if (body.favorite_priority !== undefined && body.favorite_priority !== null) {
+      const priority = parseInt(body.favorite_priority);
+      if (isNaN(priority) || priority < 0 || priority > 10) {
+        return validationErrorResponse(
+          'Invalid request data',
+          [{ field: 'favorite_priority', issue: 'invalid_range', message: 'Favorite priority must be between 0 and 10' }],
+          requestId
+        );
+      }
+    }
+
     // SECURITY: Update only if belongs to user's organization
     await query(
       `UPDATE guides SET
@@ -455,6 +507,7 @@ export async function PUT(request: NextRequest) {
         language = ?,
         description = ?,
         status = ?,
+        favorite_priority = ?,
         updated_at = NOW()
       WHERE id = ? AND organization_id = ?`,
       [
@@ -463,6 +516,7 @@ export async function PUT(request: NextRequest) {
         body.language,
         body.description,
         body.status,
+        body.favorite_priority !== undefined ? body.favorite_priority : existingGuide.favorite_priority,
         id,
         parseInt(tenantId)
       ]

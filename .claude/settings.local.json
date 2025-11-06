@@ -7,7 +7,15 @@
       "Bash(git checkout:*)",
       "Bash(node batch-update-endpoints.js:*)",
       "Bash(find:*)",
-      "Bash(npm run dev:*)"
+      "Bash(npm run dev:*)",
+      "Bash(npm run build:*)",
+      "Bash(node migrate-phase4-week1.js:*)",
+      "Bash(node -e:*)",
+      "Bash(node:*)",
+      "Bash(npm run db:verify-integrity:*)",
+      "Bash(curl:*)",
+      "Bash(nul)",
+      "Bash(npm install:*)"
     ],
     "deny": [],
     "ask": []

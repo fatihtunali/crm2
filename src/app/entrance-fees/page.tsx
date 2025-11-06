@@ -37,6 +37,7 @@ interface EntranceFee {
   adult_price: number | null;
   child_price: number | null;
   student_price: number | null;
+  favorite_priority?: number;
 }
 
 export default function EntranceFeesPage() {
@@ -236,6 +237,7 @@ export default function EntranceFeesPage() {
         onEdit={handleEdit}
         onDelete={handleDelete}
         onManagePricing={handleManagePricing}
+        onRefresh={fetchFees}
       />
 
       {/* Modals */}

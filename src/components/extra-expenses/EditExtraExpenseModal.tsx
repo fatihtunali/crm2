@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import FavoritePriorityField from '@/components/common/FavoritePriorityField';
 
 interface ExtraExpense {
   id: number;
@@ -40,7 +41,8 @@ export default function EditExtraExpenseModal({ isOpen, onClose, onSuccess, expe
     unit_price: '',
     unit_type: '',
     description: '',
-    status: 'active'
+    status: 'active',
+    favorite_priority: 0
   });
   const [providers, setProviders] = useState<Provider[]>([]);
   const [formSubmitting, setFormSubmitting] = useState(false);
@@ -62,7 +64,8 @@ export default function EditExtraExpenseModal({ isOpen, onClose, onSuccess, expe
         unit_price: expense.unit_price.toString(),
         unit_type: expense.unit_type,
         description: expense.description || '',
-        status: expense.status
+        status: expense.status,
+        favorite_priority: (expense as any).favorite_priority || 0
       });
     }
   }, [expense]);
@@ -134,7 +137,8 @@ export default function EditExtraExpenseModal({ isOpen, onClose, onSuccess, expe
           unit_price: parseFloat(formData.unit_price),
           unit_type: formData.unit_type,
           description: formData.description || null,
-          status: formData.status
+          status: formData.status,
+          favorite_priority: formData.favorite_priority
         })
       });
 
@@ -301,6 +305,14 @@ export default function EditExtraExpenseModal({ isOpen, onClose, onSuccess, expe
                   rows={4}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                   placeholder="Enter expense description..."
+                />
+              </div>
+
+              {/* Favorite Priority */}
+              <div className="border-t border-gray-200 pt-4">
+                <FavoritePriorityField
+                  value={formData.favorite_priority || 0}
+                  onChange={(val) => setFormData({ ...formData, favorite_priority: val })}
                 />
               </div>
             </div>

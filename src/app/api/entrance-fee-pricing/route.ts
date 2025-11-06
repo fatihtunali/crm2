@@ -3,6 +3,8 @@ import { query } from '@/lib/db';
 import { parsePaginationParams, parseSortParams, buildPagedResponse } from '@/lib/pagination';
 import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
 import { toMinorUnits, fromMinorUnits } from '@/lib/money';
+import { checkSeasonOverlap, validatePricingData } from '@/lib/pricing-validation';
+import { requirePermission } from '@/middleware/permissions';
 import type { Money, PagedResponse } from '@/types/api';
 
 interface EntranceFeePricingRecord {
@@ -146,7 +148,14 @@ export async function GET(request: NextRequest) {
 // POST - Create new pricing record
 export async function POST(request: NextRequest) {
   try {
-    // Check for idempotency key
+    // 1. Authenticate and get user
+    const authResult = await requirePermission(request, 'pricing', 'create');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user } = authResult;
+
+    // 2. Check for idempotency key
     const idempotencyKey = request.headers.get('Idempotency-Key');
 
     if (idempotencyKey) {
@@ -174,13 +183,13 @@ export async function POST(request: NextRequest) {
         entrance_fee_id, season_name, start_date, end_date, currency,
         adult_price, child_price, student_price,
         notes, status, effective_from, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 3)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), ?)`,
       [
         entrance_fee_id, season_name, start_date, end_date, currency,
         fromMinorUnits(adult_price.amount_minor),
         fromMinorUnits(child_price.amount_minor),
         fromMinorUnits(student_price.amount_minor),
-        notes
+        notes, user.userId
       ]
     );
 

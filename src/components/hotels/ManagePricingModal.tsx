@@ -59,9 +59,25 @@ export default function ManagePricingModal({ isOpen, onClose, hotelId, hotelName
   async function fetchPricing() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/hotel-pricing?hotel_id=${hotelId}`);
+      const res = await fetch(`/api/hotel-pricing?hotel_id=${hotelId}&status=active`);
       const data = await res.json();
-      setPricingRecords(Array.isArray(data) ? data : []);
+
+      // API returns paginated response: { data: [...], total: X }
+      // Convert Money format (amount_minor) to plain numbers
+      const records = Array.isArray(data.data) ? data.data.map((record: any) => ({
+        ...record,
+        double_room_bb: record.double_room_bb?.amount_minor ? record.double_room_bb.amount_minor / 100 : null,
+        single_supplement_bb: record.single_supplement_bb?.amount_minor ? record.single_supplement_bb.amount_minor / 100 : null,
+        triple_room_bb: record.triple_room_bb?.amount_minor ? record.triple_room_bb.amount_minor / 100 : null,
+        child_0_6_bb: record.child_0_6_bb?.amount_minor ? record.child_0_6_bb.amount_minor / 100 : null,
+        child_6_12_bb: record.child_6_12_bb?.amount_minor ? record.child_6_12_bb.amount_minor / 100 : null,
+        hb_supplement: record.hb_supplement?.amount_minor ? record.hb_supplement.amount_minor / 100 : null,
+        fb_supplement: record.fb_supplement?.amount_minor ? record.fb_supplement.amount_minor / 100 : null,
+        ai_supplement: record.ai_supplement?.amount_minor ? record.ai_supplement.amount_minor / 100 : null,
+        currency: record.double_room_bb?.currency || record.currency || 'EUR'
+      })) : [];
+
+      setPricingRecords(records);
     } catch (error) {
       console.error('Failed to fetch pricing:', error);
       setPricingRecords([]);
@@ -114,38 +130,57 @@ export default function ManagePricingModal({ isOpen, onClose, hotelId, hotelName
 
   async function handleSave() {
     try {
+      // Convert prices to Money format (amount_minor = cents)
+      const toMoney = (value: string) => {
+        const amount = parseFloat(value);
+        return isNaN(amount) ? { amount_minor: 0, currency: formData.currency } : { amount_minor: Math.round(amount * 100), currency: formData.currency };
+      };
+
       const payload = {
-        ...formData,
-        double_room_bb: formData.double_room_bb ? parseFloat(formData.double_room_bb) : null,
-        single_supplement_bb: formData.single_supplement_bb ? parseFloat(formData.single_supplement_bb) : null,
-        triple_room_bb: formData.triple_room_bb ? parseFloat(formData.triple_room_bb) : null,
-        child_0_6_bb: formData.child_0_6_bb ? parseFloat(formData.child_0_6_bb) : null,
-        child_6_12_bb: formData.child_6_12_bb ? parseFloat(formData.child_6_12_bb) : null,
-        hb_supplement: formData.hb_supplement ? parseFloat(formData.hb_supplement) : null,
-        fb_supplement: formData.fb_supplement ? parseFloat(formData.fb_supplement) : null,
-        ai_supplement: formData.ai_supplement ? parseFloat(formData.ai_supplement) : null,
+        season_name: formData.season_name,
+        start_date: formData.start_date,
+        end_date: formData.end_date,
+        currency: formData.currency,
+        double_room_bb: toMoney(formData.double_room_bb),
+        single_supplement_bb: toMoney(formData.single_supplement_bb),
+        triple_room_bb: toMoney(formData.triple_room_bb),
+        child_0_6_bb: toMoney(formData.child_0_6_bb),
+        child_6_12_bb: toMoney(formData.child_6_12_bb),
+        hb_supplement: toMoney(formData.hb_supplement),
+        fb_supplement: toMoney(formData.fb_supplement),
+        ai_supplement: toMoney(formData.ai_supplement),
+        base_meal_plan: formData.base_meal_plan,
+        notes: formData.notes
       };
 
       if (editingId) {
-        await fetch('/api/hotel-pricing', {
+        const res = await fetch('/api/hotel-pricing', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: editingId, ...payload, status: 'active' })
         });
+        if (!res.ok) {
+          const error = await res.json();
+          throw new Error(error.error || 'Failed to update pricing');
+        }
       } else {
-        await fetch('/api/hotel-pricing', {
+        const res = await fetch('/api/hotel-pricing', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ hotel_id: hotelId, ...payload })
         });
+        if (!res.ok) {
+          const error = await res.json();
+          throw new Error(error.error || 'Failed to create pricing');
+        }
       }
 
       setEditingId(null);
       setShowNewForm(false);
       fetchPricing();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to save pricing:', error);
-      alert('Failed to save pricing');
+      alert(error.message || 'Failed to save pricing');
     }
   }
 

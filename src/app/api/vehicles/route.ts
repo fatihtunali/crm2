@@ -125,7 +125,7 @@ export async function GET(request: NextRequest) {
 
     // Parse sort
     const sortParam = searchParams.get('sort');
-    let orderBy = 'v.vehicle_type ASC, v.city ASC'; // Default sort
+    let orderBy = 'v.favorite_priority DESC, v.vehicle_type ASC, v.city ASC'; // Default sort - favorites first
 
     if (sortParam) {
       // Map sort fields to actual column names
@@ -143,6 +143,7 @@ export async function GET(request: NextRequest) {
           'status': 'v.status',
           'created_at': 'v.created_at',
           'updated_at': 'v.updated_at',
+          'favorite_priority': 'v.favorite_priority',
         };
 
         const column = columnMap[fieldName] || `v.${fieldName}`;
@@ -152,18 +153,18 @@ export async function GET(request: NextRequest) {
       orderBy = sortFields.join(', ');
     }
 
-    // Build base query
+    // Build base query - Use GROUP BY to avoid duplicates from multiple pricing records
     let sql = `
       SELECT
         v.*,
         p.provider_name,
-        vp.id as pricing_id,
-        vp.season_name,
-        vp.start_date as season_start,
-        vp.end_date as season_end,
-        vp.currency,
-        vp.price_per_day,
-        vp.price_half_day
+        MAX(vp.id) as pricing_id,
+        MAX(vp.season_name) as season_name,
+        MAX(vp.start_date) as season_start,
+        MAX(vp.end_date) as season_end,
+        MAX(vp.currency) as currency,
+        MAX(vp.price_per_day) as price_per_day,
+        MAX(vp.price_half_day) as price_half_day
       FROM vehicles v
       LEFT JOIN providers p ON v.provider_id = p.id
       LEFT JOIN vehicle_pricing vp ON v.id = vp.vehicle_id
@@ -175,6 +176,9 @@ export async function GET(request: NextRequest) {
     if (whereClause) {
       sql += ` WHERE ${whereClause}`;
     }
+
+    // Add GROUP BY to eliminate duplicates from pricing join
+    sql += ` GROUP BY v.id, p.provider_name`;
 
     // Add ORDER BY, LIMIT, OFFSET
     sql += ` ORDER BY ${orderBy} LIMIT ? OFFSET ?`;
@@ -299,6 +303,7 @@ export async function POST(request: NextRequest) {
       description,
       provider_id,
       status = 'active',
+      favorite_priority,
     } = body;
 
     // Validate required fields
@@ -321,11 +326,23 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Validate favorite_priority (0-10)
+    if (favorite_priority !== undefined && favorite_priority !== null) {
+      const priority = parseInt(favorite_priority);
+      if (isNaN(priority) || priority < 0 || priority > 10) {
+        return validationErrorResponse(
+          'Invalid input',
+          [{ field: 'favorite_priority', issue: 'invalid_range', message: 'Favorite priority must be between 0 and 10' }],
+          requestId
+        );
+      }
+    }
+
     // Insert vehicle
     const result = await query(
       `INSERT INTO vehicles (
-        organization_id, vehicle_type, max_capacity, city, description, provider_id, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+        organization_id, vehicle_type, max_capacity, city, description, provider_id, status, favorite_priority
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         tenantId,
         vehicle_type,
@@ -334,6 +351,7 @@ export async function POST(request: NextRequest) {
         description || null,
         provider_id || null,
         status,
+        favorite_priority || 0,
       ]
     );
 
@@ -418,7 +436,7 @@ export async function PUT(request: NextRequest) {
 
     // Verify the vehicle exists and belongs to this tenant
     const [existingVehicle] = await query(
-      'SELECT id FROM vehicles WHERE id = ? AND organization_id = ?',
+      'SELECT * FROM vehicles WHERE id = ? AND organization_id = ?',
       [id, parseInt(tenantId)]
     ) as any[];
 
@@ -432,6 +450,18 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    // Validate favorite_priority if provided
+    if (body.favorite_priority !== undefined && body.favorite_priority !== null) {
+      const priority = parseInt(body.favorite_priority);
+      if (isNaN(priority) || priority < 0 || priority > 10) {
+        return validationErrorResponse(
+          'Invalid input',
+          [{ field: 'favorite_priority', issue: 'invalid_range', message: 'Favorite priority must be between 0 and 10' }],
+          requestId
+        );
+      }
+    }
+
     // Update the vehicle
     await query(
       `UPDATE vehicles SET
@@ -441,6 +471,7 @@ export async function PUT(request: NextRequest) {
         city = ?,
         description = ?,
         status = ?,
+        favorite_priority = ?,
         updated_at = NOW()
       WHERE id = ? AND organization_id = ?`,
       [
@@ -450,6 +481,7 @@ export async function PUT(request: NextRequest) {
         body.city,
         body.description,
         body.status,
+        body.favorite_priority !== undefined ? body.favorite_priority : existingVehicle.favorite_priority,
         id,
         parseInt(tenantId)
       ]

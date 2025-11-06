@@ -93,7 +93,16 @@ export default function NewHotelModal({ isOpen, onClose, onSuccess }: NewHotelMo
       });
 
       if (!res.ok) {
-        throw new Error('Failed to create hotel');
+        const errorData = await res.json();
+        console.error('API Error Response:', errorData);
+        const errorMessage = typeof errorData.detail === 'string'
+          ? errorData.detail
+          : typeof errorData.error === 'string'
+          ? errorData.error
+          : typeof errorData.message === 'string'
+          ? errorData.message
+          : JSON.stringify(errorData);
+        throw new Error(errorMessage);
       }
 
       setFormData({
@@ -106,9 +115,9 @@ export default function NewHotelModal({ isOpen, onClose, onSuccess }: NewHotelMo
       });
       onSuccess();
       onClose();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Form submission error:', error);
-      setFormError('Failed to create hotel. Please try again.');
+      setFormError(error.message || 'Failed to create hotel. Please try again.');
     } finally {
       setFormSubmitting(false);
     }

@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import FavoritePriorityField from '@/components/common/FavoritePriorityField';
 
 interface Transfer {
   id: number;
@@ -59,7 +60,8 @@ export default function EditTransferModal({ isOpen, onClose, onSuccess, transfer
     price_roundtrip: '',
     estimated_duration_hours: '',
     notes: '',
-    status: 'active'
+    status: 'active',
+    favorite_priority: 0
   });
   const [vehicles, setVehicles] = useState<Vehicle[]>([]);
   const [providers, setProviders] = useState<Provider[]>([]);
@@ -92,7 +94,8 @@ export default function EditTransferModal({ isOpen, onClose, onSuccess, transfer
         price_roundtrip: transfer.price_roundtrip.toString(),
         estimated_duration_hours: transfer.estimated_duration_hours ? transfer.estimated_duration_hours.toString() : '',
         notes: transfer.notes || '',
-        status: transfer.status
+        status: transfer.status,
+        favorite_priority: (transfer as any).favorite_priority || 0
       });
     }
   }, [transfer]);
@@ -208,7 +211,8 @@ export default function EditTransferModal({ isOpen, onClose, onSuccess, transfer
           price_roundtrip: parseFloat(formData.price_roundtrip),
           estimated_duration_hours: formData.estimated_duration_hours ? parseFloat(formData.estimated_duration_hours) : null,
           notes: formData.notes || null,
-          status: formData.status
+          status: formData.status,
+          favorite_priority: formData.favorite_priority
         })
       });
 
@@ -464,6 +468,14 @@ export default function EditTransferModal({ isOpen, onClose, onSuccess, transfer
                   <option value="inactive">Inactive</option>
                   <option value="archived">Archived</option>
                 </select>
+              </div>
+
+              {/* Favorite Priority */}
+              <div className="border-t border-gray-200 pt-4">
+                <FavoritePriorityField
+                  value={formData.favorite_priority || 0}
+                  onChange={(val) => setFormData({ ...formData, favorite_priority: val })}
+                />
               </div>
             </div>
           </div>

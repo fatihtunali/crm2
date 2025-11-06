@@ -1,0 +1,44 @@
+[2025-11-06T07:22:50.045Z] Total connections: 40
+[2025-11-06T07:22:50.047Z] ⚠️  Found 39 ghost connections
+[2025-11-06T07:22:50.227Z]    ✅ Killed: ID=30660 User=crm Time=320s
+[2025-11-06T07:22:50.425Z]    ✅ Killed: ID=30661 User=crm Time=320s
+[2025-11-06T07:22:50.607Z]    ✅ Killed: ID=30662 User=crm Time=323s
+[2025-11-06T07:22:50.813Z]    ✅ Killed: ID=30663 User=crm Time=315s
+[2025-11-06T07:22:51.005Z]    ✅ Killed: ID=30664 User=crm Time=315s
+[2025-11-06T07:22:51.196Z]    ✅ Killed: ID=30665 User=crm Time=314s
+[2025-11-06T07:22:51.385Z]    ✅ Killed: ID=30666 User=crm Time=314s
+[2025-11-06T07:22:51.586Z]    ✅ Killed: ID=30667 User=crm Time=309s
+[2025-11-06T07:22:51.787Z]    ✅ Killed: ID=30668 User=crm Time=308s
+[2025-11-06T07:22:52.009Z]    ✅ Killed: ID=30669 User=crm Time=308s
+[2025-11-06T07:22:52.206Z]    ✅ Killed: ID=30670 User=crm Time=307s
+[2025-11-06T07:22:52.375Z]    ✅ Killed: ID=30671 User=crm Time=308s
+[2025-11-06T07:22:52.565Z]    ✅ Killed: ID=30672 User=crm Time=307s
+[2025-11-06T07:22:52.766Z]    ✅ Killed: ID=30673 User=crm Time=302s
+[2025-11-06T07:22:52.946Z]    ✅ Killed: ID=30674 User=crm Time=302s
+[2025-11-06T07:22:53.153Z]    ✅ Killed: ID=30675 User=crm Time=300s
+[2025-11-06T07:22:53.347Z]    ✅ Killed: ID=30676 User=crm Time=299s
+[2025-11-06T07:22:53.546Z]    ✅ Killed: ID=30677 User=crm Time=299s
+[2025-11-06T07:22:53.725Z]    ✅ Killed: ID=30678 User=crm Time=299s
+[2025-11-06T07:22:53.935Z]    ✅ Killed: ID=30679 User=crm Time=299s
+[2025-11-06T07:22:54.126Z]    ✅ Killed: ID=30680 User=crm Time=294s
+[2025-11-06T07:22:54.306Z]    ✅ Killed: ID=30681 User=crm Time=294s
+[2025-11-06T07:22:54.485Z]    ✅ Killed: ID=30682 User=crm Time=291s
+[2025-11-06T07:22:54.706Z]    ✅ Killed: ID=30683 User=crm Time=251s
+[2025-11-06T07:22:54.905Z]    ✅ Killed: ID=30684 User=crm Time=251s
+[2025-11-06T07:22:55.106Z]    ✅ Killed: ID=30685 User=crm Time=251s
+[2025-11-06T07:22:55.306Z]    ✅ Killed: ID=30686 User=crm Time=251s
+[2025-11-06T07:22:55.485Z]    ✅ Killed: ID=30687 User=crm Time=251s
+[2025-11-06T07:22:55.686Z]    ✅ Killed: ID=30688 User=crm Time=251s
+[2025-11-06T07:22:55.886Z]    ✅ Killed: ID=30689 User=crm Time=251s
+[2025-11-06T07:22:56.086Z]    ✅ Killed: ID=30690 User=crm Time=249s
+[2025-11-06T07:22:56.269Z]    ✅ Killed: ID=30691 User=crm Time=249s
+[2025-11-06T07:22:56.425Z]    ✅ Killed: ID=30692 User=crm Time=249s
+[2025-11-06T07:22:56.606Z]    ✅ Killed: ID=30693 User=crm Time=249s
+[2025-11-06T07:22:56.806Z]    ✅ Killed: ID=30694 User=crm Time=249s
+[2025-11-06T07:22:57.005Z]    ✅ Killed: ID=30695 User=crm Time=249s
+[2025-11-06T07:22:57.206Z]    ✅ Killed: ID=30696 User=crm Time=248s
+[2025-11-06T07:22:57.405Z]    ✅ Killed: ID=30697 User=crm Time=248s
+[2025-11-06T07:22:57.606Z]    ✅ Killed: ID=30698 User=crm Time=244s
+[2025-11-06T07:22:57.607Z] 📊 Summary: 39 killed, 0 failed
+[2025-11-06T07:22:57.807Z] Active connections after cleanup: 5
+[2025-11-06T07:22:57.808Z] ✅ Ghost connection cleanup complete

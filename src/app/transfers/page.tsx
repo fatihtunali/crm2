@@ -29,6 +29,7 @@ interface Transfer {
   created_by: number | null;
   vehicle_type: string | null;
   capacity: number | null;
+  favorite_priority?: number;
 }
 
 export default function TransfersPage() {
@@ -239,6 +240,7 @@ export default function TransfersPage() {
         onView={handleView}
         onEdit={handleEdit}
         onDelete={handleDelete}
+        onRefresh={fetchTransfers}
       />
 
       {/* Modals */}

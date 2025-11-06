@@ -32,6 +32,7 @@ interface Restaurant {
   notes: string | null;
   status: string;
   created_at: string;
+  favorite_priority?: number;
 }
 
 export default function RestaurantsPage() {
@@ -240,6 +241,7 @@ export default function RestaurantsPage() {
         onEdit={handleEdit}
         onDelete={handleDelete}
         onManageSeasons={handleManageSeasons}
+        onRefresh={fetchRestaurants}
       />
 
       {/* Modals */}

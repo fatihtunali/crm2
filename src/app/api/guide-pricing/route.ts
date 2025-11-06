@@ -3,6 +3,8 @@ import { query } from '@/lib/db';
 import { parsePaginationParams, parseSortParams, buildPagedResponse } from '@/lib/pagination';
 import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
 import { toMinorUnits, fromMinorUnits } from '@/lib/money';
+import { checkSeasonOverlap, validatePricingData } from '@/lib/pricing-validation';
+import { requirePermission } from '@/middleware/permissions';
 import type { Money, PagedResponse } from '@/types/api';
 
 interface GuidePricingRecord {
@@ -146,7 +148,14 @@ export async function GET(request: NextRequest) {
 // POST - Create new pricing record
 export async function POST(request: NextRequest) {
   try {
-    // Check for idempotency key
+    // 1. Authenticate and get user
+    const authResult = await requirePermission(request, 'pricing', 'create');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user } = authResult;
+
+    // 2. Check for idempotency key
     const idempotencyKey = request.headers.get('Idempotency-Key');
 
     if (idempotencyKey) {
@@ -169,12 +178,37 @@ export async function POST(request: NextRequest) {
       notes
     } = body;
 
+    // Validate pricing data format
+    const validation = validatePricingData({ start_date, end_date, season_name });
+    if (!validation.valid) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
+
+    // Check for season overlaps
+    const overlapResult = await checkSeasonOverlap(
+      'guide_pricing',
+      'guide_id',
+      guide_id,
+      start_date,
+      end_date
+    );
+
+    if (overlapResult.hasOverlap) {
+      return NextResponse.json(
+        {
+          error: overlapResult.message,
+          conflicting_seasons: overlapResult.conflictingSeasons
+        },
+        { status: 409 }
+      );
+    }
+
     const result = await query(
       `INSERT INTO guide_pricing (
         guide_id, season_name, start_date, end_date, currency,
         full_day_price, half_day_price, night_price,
         notes, status, effective_from, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 3)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), ?)`,
       [
         guide_id,
         season_name,
@@ -184,7 +218,8 @@ export async function POST(request: NextRequest) {
         fromMinorUnits(full_day_price.amount_minor),
         fromMinorUnits(half_day_price.amount_minor),
         fromMinorUnits(night_price.amount_minor),
-        notes
+        notes,
+        user.userId
       ]
     );
 

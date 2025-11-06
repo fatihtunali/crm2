@@ -1,4 +1,5 @@
 import { useState, Fragment } from 'react';
+import FavoritePriorityToggle from '@/components/common/FavoritePriorityToggle';
 
 interface Restaurant {
   id: number;
@@ -22,6 +23,7 @@ interface Restaurant {
   notes: string | null;
   status: string;
   created_at: string;
+  favorite_priority?: number;
 }
 
 interface RestaurantTableProps {
@@ -31,6 +33,7 @@ interface RestaurantTableProps {
   onEdit: (restaurant: Restaurant) => void;
   onDelete: (restaurant: Restaurant) => void;
   onManageSeasons: (restaurant: Restaurant) => void;
+  onRefresh?: () => void;
 }
 
 export default function RestaurantTable({
@@ -39,7 +42,8 @@ export default function RestaurantTable({
   onView,
   onEdit,
   onDelete,
-  onManageSeasons
+  onManageSeasons,
+  onRefresh
 }: RestaurantTableProps) {
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
 
@@ -112,6 +116,7 @@ export default function RestaurantTable({
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"></th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Favorite</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Provider / Company</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Restaurant</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">City</th>
@@ -138,6 +143,17 @@ export default function RestaurantTable({
                       >
                         ▶
                       </button>
+                    </td>
+                    <td className="px-4 py-4 text-center">
+                      <div className="flex justify-center">
+                        <FavoritePriorityToggle
+                          currentPriority={restaurant.favorite_priority || 0}
+                          itemId={restaurant.id}
+                          itemType="hotel"
+                          onUpdate={onRefresh}
+                          size="sm"
+                        />
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">{restaurant.provider_name || 'Not assigned'}</div>
@@ -199,7 +215,7 @@ export default function RestaurantTable({
                   {/* Expandable Pricing Details Row */}
                   {isExpanded && (
                     <tr>
-                      <td colSpan={9} className="px-6 py-4 bg-gray-50">
+                      <td colSpan={10} className="px-6 py-4 bg-gray-50">
                         <div className="grid grid-cols-2 gap-4">
                           {/* Restaurant Pricing Table */}
                           <div>

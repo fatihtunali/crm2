@@ -1,5 +1,6 @@
 import { useState, Fragment, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import FavoritePriorityToggle from '@/components/common/FavoritePriorityToggle';
 
 interface Provider {
   id: number;
@@ -28,6 +29,7 @@ interface Provider {
   restaurants_count?: number;
   entrance_fees_count?: number;
   extra_expenses_count?: number;
+  favorite_priority?: number;
 }
 
 interface PricingData {
@@ -45,6 +47,7 @@ interface ProvidersTableProps {
   onView: (provider: Provider) => void;
   onEdit: (provider: Provider) => void;
   onDelete: (provider: Provider) => void;
+  onRefresh?: () => void;
 }
 
 export default function ProvidersTable({
@@ -52,7 +55,8 @@ export default function ProvidersTable({
   loading,
   onView,
   onEdit,
-  onDelete
+  onDelete,
+  onRefresh
 }: ProvidersTableProps) {
   const { organizationId } = useAuth();
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
@@ -245,6 +249,7 @@ export default function ProvidersTable({
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"></th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Provider ID</th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Favorite</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Name</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Type</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Services</th>
@@ -278,6 +283,17 @@ export default function ProvidersTable({
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-mono text-gray-500">#{provider.id}</div>
+                    </td>
+                    <td className="px-4 py-4 text-center">
+                      <div className="flex justify-center">
+                        <FavoritePriorityToggle
+                          currentPriority={provider.favorite_priority || 0}
+                          itemId={provider.id}
+                          itemType="hotel"
+                          onUpdate={onRefresh}
+                          size="sm"
+                        />
+                      </div>
                     </td>
                     <td className="px-6 py-4">
                       <div className="text-sm font-medium text-gray-900">

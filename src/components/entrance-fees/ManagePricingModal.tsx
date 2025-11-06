@@ -47,9 +47,20 @@ export default function ManagePricingModal({ isOpen, onClose, entranceFeeId, sit
   async function fetchPricing() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/entrance-fee-pricing?entrance_fee_id=${entranceFeeId}`);
+      const res = await fetch(`/api/entrance-fee-pricing?entrance_fee_id=${entranceFeeId}&status=active`);
       const data = await res.json();
-      setPricingRecords(Array.isArray(data) ? data : []);
+
+      // API returns paginated response: { data: [...], total: X }
+      // Convert Money format (amount_minor) to plain numbers
+      const records = Array.isArray(data.data) ? data.data.map((record: any) => ({
+        ...record,
+        adult_price: record.adult_price?.amount_minor ? record.adult_price.amount_minor / 100 : null,
+        child_price: record.child_price?.amount_minor ? record.child_price.amount_minor / 100 : null,
+        student_price: record.student_price?.amount_minor ? record.student_price.amount_minor / 100 : null,
+        currency: record.adult_price?.currency || record.currency || 'EUR'
+      })) : [];
+
+      setPricingRecords(records);
     } catch (error) {
       console.error('Failed to fetch pricing:', error);
       setPricingRecords([]);
@@ -90,33 +101,51 @@ export default function ManagePricingModal({ isOpen, onClose, entranceFeeId, sit
 
   async function handleSave() {
     try {
+      // Convert prices to Money format (amount_minor = cents)
+      const toMoney = (value: string) => {
+        const amount = parseFloat(value);
+        return isNaN(amount) ? { amount_minor: 0, currency: formData.currency } : { amount_minor: Math.round(amount * 100), currency: formData.currency };
+      };
+
       const payload = {
-        ...formData,
-        adult_price: formData.adult_price ? parseFloat(formData.adult_price) : null,
-        child_price: formData.child_price ? parseFloat(formData.child_price) : null,
-        student_price: formData.student_price ? parseFloat(formData.student_price) : null,
+        season_name: formData.season_name,
+        start_date: formData.start_date,
+        end_date: formData.end_date,
+        currency: formData.currency,
+        adult_price: toMoney(formData.adult_price),
+        child_price: toMoney(formData.child_price),
+        student_price: toMoney(formData.student_price),
+        notes: formData.notes
       };
 
       if (editingId) {
-        await fetch('/api/entrance-fee-pricing', {
+        const res = await fetch('/api/entrance-fee-pricing', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: editingId, ...payload, status: 'active' })
         });
+        if (!res.ok) {
+          const error = await res.json();
+          throw new Error(error.error || 'Failed to update pricing');
+        }
       } else {
-        await fetch('/api/entrance-fee-pricing', {
+        const res = await fetch('/api/entrance-fee-pricing', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ entrance_fee_id: entranceFeeId, ...payload })
         });
+        if (!res.ok) {
+          const error = await res.json();
+          throw new Error(error.error || 'Failed to create pricing');
+        }
       }
 
       setEditingId(null);
       setShowNewForm(false);
       fetchPricing();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to save pricing:', error);
-      alert('Failed to save pricing');
+      alert(error.message || 'Failed to save pricing');
     }
   }
 

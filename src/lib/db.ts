@@ -15,12 +15,15 @@ const pool = mysql.createPool({
   password: env.DATABASE_PASSWORD,
   database: env.DATABASE_NAME,
   waitForConnections: true,
-  connectionLimit: 10, // Maximum number of connections in pool
-  maxIdle: 10, // Maximum number of idle connections
-  idleTimeout: 60000, // Close idle connections after 60 seconds
+  connectionLimit: 20, // Increased from 10 to handle more concurrent requests
+  maxIdle: 5, // Reduced from 10 to close idle connections faster
+  idleTimeout: 30000, // Reduced from 60s to 30s to prevent ghost connections
   queueLimit: 0, // Unlimited queue
   enableKeepAlive: true,
   keepAliveInitialDelay: 0,
+  // Additional connection management
+  connectTimeout: 10000, // 10 second connection timeout
+  timezone: '+00:00', // Use UTC
 });
 
 /**

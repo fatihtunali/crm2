@@ -28,6 +28,7 @@ interface Guide {
   full_day_price: number | null;
   half_day_price: number | null;
   night_price: number | null;
+  favorite_priority?: number;
 }
 
 export default function GuidesPage() {
@@ -217,6 +218,7 @@ export default function GuidesPage() {
         onView={handleView}
         onEdit={handleEdit}
         onDelete={handleDelete}
+        onRefresh={fetchGuides}
       />
 
       {/* Modals */}

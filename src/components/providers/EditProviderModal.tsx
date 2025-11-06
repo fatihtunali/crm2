@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import FavoritePriorityField from '@/components/common/FavoritePriorityField';
 
 interface Provider {
   id: number;
@@ -49,7 +50,8 @@ export default function EditProviderModal({ isOpen, onClose, onSuccess, provider
     is_parent: false,
     parent_provider_id: '',
     company_tax_id: '',
-    company_legal_name: ''
+    company_legal_name: '',
+    favorite_priority: 0
   });
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
@@ -92,7 +94,8 @@ export default function EditProviderModal({ isOpen, onClose, onSuccess, provider
         is_parent: provider.is_parent === 1,
         parent_provider_id: provider.parent_provider_id ? provider.parent_provider_id.toString() : '',
         company_tax_id: provider.company_tax_id || '',
-        company_legal_name: provider.company_legal_name || ''
+        company_legal_name: provider.company_legal_name || '',
+        favorite_priority: (provider as any).favorite_priority || 0
       });
     }
   }, [provider]);
@@ -155,7 +158,8 @@ export default function EditProviderModal({ isOpen, onClose, onSuccess, provider
           is_parent: formData.is_parent ? 1 : 0,
           parent_provider_id: formData.parent_provider_id ? parseInt(formData.parent_provider_id) : null,
           company_tax_id: formData.company_tax_id || null,
-          company_legal_name: formData.company_legal_name || null
+          company_legal_name: formData.company_legal_name || null,
+          favorite_priority: formData.favorite_priority
         })
       });
 
@@ -425,6 +429,14 @@ export default function EditProviderModal({ isOpen, onClose, onSuccess, provider
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* Favorite Priority */}
+              <div className="border-t border-gray-200 pt-4">
+                <FavoritePriorityField
+                  value={formData.favorite_priority || 0}
+                  onChange={(val) => setFormData({ ...formData, favorite_priority: val })}
+                />
               </div>
             </div>
           </div>

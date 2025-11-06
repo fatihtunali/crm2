@@ -1,4 +1,5 @@
 import { useState, Fragment } from 'react';
+import FavoritePriorityToggle from '@/components/common/FavoritePriorityToggle';
 
 interface ExtraExpense {
   id: number;
@@ -15,6 +16,7 @@ interface ExtraExpense {
   status: string;
   created_at: string;
   updated_at: string;
+  favorite_priority?: number;
 }
 
 interface ExtraExpenseTableProps {
@@ -23,6 +25,7 @@ interface ExtraExpenseTableProps {
   onView: (expense: ExtraExpense) => void;
   onEdit: (expense: ExtraExpense) => void;
   onDelete: (expense: ExtraExpense) => void;
+  onRefresh?: () => void;
 }
 
 export default function ExtraExpenseTable({
@@ -30,7 +33,8 @@ export default function ExtraExpenseTable({
   loading,
   onView,
   onEdit,
-  onDelete
+  onDelete,
+  onRefresh
 }: ExtraExpenseTableProps) {
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
 
@@ -82,6 +86,7 @@ export default function ExtraExpenseTable({
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"></th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Favorite</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Provider / Company</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Expense Name</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Category</th>
@@ -108,6 +113,17 @@ export default function ExtraExpenseTable({
                       >
                         ▶
                       </button>
+                    </td>
+                    <td className="px-4 py-4 text-center">
+                      <div className="flex justify-center">
+                        <FavoritePriorityToggle
+                          currentPriority={expense.favorite_priority || 0}
+                          itemId={expense.id}
+                          itemType="hotel"
+                          onUpdate={onRefresh}
+                          size="sm"
+                        />
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">{expense.provider_name || 'Not assigned'}</div>
@@ -165,7 +181,7 @@ export default function ExtraExpenseTable({
                   {/* Expandable Details Row */}
                   {isExpanded && (
                     <tr>
-                      <td colSpan={9} className="px-6 py-4 bg-gray-50">
+                      <td colSpan={10} className="px-6 py-4 bg-gray-50">
                         <div className="grid grid-cols-2 gap-4">
                           {/* Pricing Information Table */}
                           <div>

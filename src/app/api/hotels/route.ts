@@ -93,14 +93,14 @@ export async function GET(request: NextRequest) {
     // 5. Parse search
     const searchTerm = searchParams.get('search') || searchParams.get('q') || '';
 
-    // 6. Parse sort (default: -created_at)
-    const sortParam = searchParams.get('sort') || '-created_at';
+    // 6. Parse sort (default: favorites first, then -created_at)
+    const sortParam = searchParams.get('sort') || '-favorite_priority,-created_at';
     // SECURITY: Whitelist allowed columns
     const ALLOWED_COLUMNS = [
       'id', 'hotel_name', 'city', 'region', 'star_rating', 'hotel_category',
-      'created_at', 'updated_at', 'status'
+      'created_at', 'updated_at', 'status', 'favorite_priority'
     ];
-    const orderBy = parseSortParams(sortParam, ALLOWED_COLUMNS) || 'h.created_at DESC';
+    const orderBy = parseSortParams(sortParam, ALLOWED_COLUMNS) || 'h.favorite_priority DESC, h.created_at DESC';
 
     // 7. Build WHERE clause
     const whereClause = buildWhereClause(filters);
@@ -301,7 +301,7 @@ export async function POST(request: NextRequest) {
       place_types,
       price_level,
       business_status,
-      region
+      favorite_priority
     } = body;
 
     // 4. Validation
@@ -323,6 +323,18 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Validate favorite_priority (0-10)
+    if (favorite_priority !== undefined && favorite_priority !== null) {
+      const priority = parseInt(favorite_priority);
+      if (isNaN(priority) || priority < 0 || priority > 10) {
+        validationErrors.push({
+          field: 'favorite_priority',
+          issue: 'invalid_range',
+          message: 'Favorite priority must be between 0 and 10'
+        });
+      }
+    }
+
     if (validationErrors.length > 0) {
       return validationErrorResponse(
         'Invalid request data',
@@ -337,7 +349,7 @@ export async function POST(request: NextRequest) {
       'room_count', 'is_boutique', 'address', 'latitude', 'longitude', 'google_maps_url',
       'contact_phone', 'contact_email', 'notes', 'photo_url_1', 'photo_url_2', 'photo_url_3',
       'rating', 'user_ratings_total', 'website', 'editorial_summary', 'place_types',
-      'price_level', 'business_status', 'region', 'status'
+      'price_level', 'business_status', 'status', 'favorite_priority'
     ];
 
     const insertValues = [
@@ -345,7 +357,7 @@ export async function POST(request: NextRequest) {
       room_count, is_boutique, address, latitude, longitude, google_maps_url,
       contact_phone, contact_email, notes, photo_url_1, photo_url_2, photo_url_3,
       rating, user_ratings_total, website, editorial_summary, place_types,
-      price_level, business_status, region, 'active'
+      price_level, business_status, 'active', body.favorite_priority || 0
     ];
 
     // Add idempotency_key if provided
@@ -458,6 +470,18 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    // Validate favorite_priority if provided
+    if (updateFields.favorite_priority !== undefined && updateFields.favorite_priority !== null) {
+      const priority = parseInt(updateFields.favorite_priority);
+      if (isNaN(priority) || priority < 0 || priority > 10) {
+        return validationErrorResponse(
+          'Invalid request data',
+          [{ field: 'favorite_priority', issue: 'invalid_range', message: 'Favorite priority must be between 0 and 10' }],
+          requestId
+        );
+      }
+    }
+
     // SECURITY: Update only if belongs to user's organization
     await query(
       `UPDATE hotels SET
@@ -467,7 +491,7 @@ export async function PUT(request: NextRequest) {
         contact_email = ?, notes = ?, photo_url_1 = ?, photo_url_2 = ?,
         photo_url_3 = ?, rating = ?, user_ratings_total = ?, website = ?,
         editorial_summary = ?, place_types = ?, price_level = ?,
-        business_status = ?, status = ?, updated_at = NOW()
+        business_status = ?, status = ?, favorite_priority = ?, updated_at = NOW()
       WHERE id = ? AND organization_id = ?`,
       [
         updateFields.google_place_id, updateFields.hotel_name, updateFields.city,
@@ -478,7 +502,8 @@ export async function PUT(request: NextRequest) {
         updateFields.photo_url_2, updateFields.photo_url_3, updateFields.rating,
         updateFields.user_ratings_total, updateFields.website, updateFields.editorial_summary,
         updateFields.place_types, updateFields.price_level, updateFields.business_status,
-        updateFields.status, id, parseInt(tenantId)
+        updateFields.status, updateFields.favorite_priority !== undefined ? updateFields.favorite_priority : existingHotel.favorite_priority,
+        id, parseInt(tenantId)
       ]
     );
 

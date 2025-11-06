@@ -28,6 +28,7 @@ interface Vehicle {
   currency: string | null;
   price_per_day: number | null;
   price_half_day: number | null;
+  favorite_priority?: number;
 }
 
 export default function VehiclesPage() {
@@ -221,6 +222,7 @@ export default function VehiclesPage() {
         onView={handleView}
         onEdit={handleEdit}
         onDelete={handleDelete}
+        onRefresh={fetchVehicles}
       />
 
       {/* Modals */}

@@ -12,11 +12,11 @@ export async function GET(request: Request) {
     // Parse pagination parameters
     const { page, pageSize, offset } = parsePaginationParams(searchParams);
 
-    // Parse sort parameters (default: expense_name ASC)
-    const sortParam = searchParams.get('sort') || 'expense_name';
+    // Parse sort parameters (default: favorites first, then expense_name ASC)
+    const sortParam = searchParams.get('sort') || '-favorite_priority,expense_name';
     // SECURITY: Whitelist allowed columns to prevent SQL injection
-    const ALLOWED_COLUMNS = ['id', 'expense_name', 'expense_category', 'city', 'unit_price', 'unit_type', 'currency', 'status', 'created_at', 'updated_at'];
-    const orderBy = parseSortParams(sortParam, ALLOWED_COLUMNS) || 'expense_name ASC';
+    const ALLOWED_COLUMNS = ['ee.id', 'ee.expense_name', 'ee.expense_category', 'ee.city', 'ee.unit_price', 'ee.unit_type', 'ee.currency', 'ee.status', 'ee.created_at', 'ee.updated_at', 'ee.favorite_priority', 'p.provider_name'];
+    const orderBy = parseSortParams(sortParam, ALLOWED_COLUMNS) || 'ee.favorite_priority DESC, ee.expense_name ASC';
 
     // Build filters
     const filters: Record<string, any> = {};
@@ -135,8 +135,8 @@ export async function POST(request: Request) {
     const result = await query(
       `INSERT INTO extra_expenses (
         organization_id, provider_id, expense_name, expense_category, city, currency,
-        unit_price, unit_type, description, status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')`,
+        unit_price, unit_type, description, status, favorite_priority
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?)`,
       [
         organization_id || 1,
         provider_id || null,
@@ -146,7 +146,8 @@ export async function POST(request: Request) {
         currency || 'EUR',
         unitPriceValue,
         unit_type,
-        description || null
+        description || null,
+        body.favorite_priority || 0
       ]
     );
 
@@ -232,6 +233,7 @@ export async function PUT(request: Request) {
         unit_type = ?,
         description = ?,
         status = ?,
+        favorite_priority = ?,
         updated_at = NOW()
       WHERE id = ?`,
       [
@@ -244,6 +246,7 @@ export async function PUT(request: Request) {
         body.unit_type,
         body.description,
         body.status,
+        body.favorite_priority !== undefined ? body.favorite_priority : existingExpense.favorite_priority,
         id
       ]
     );

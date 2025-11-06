@@ -1,4 +1,5 @@
 import { useState, Fragment } from 'react';
+import FavoritePriorityToggle from '@/components/common/FavoritePriorityToggle';
 
 interface TourPackage {
   id: number;
@@ -40,6 +41,7 @@ interface TourPackage {
   sic_provider_name: string | null;
   pvt_provider_id: number | null;
   pvt_provider_name: string | null;
+  favorite_priority?: number;
 }
 
 interface TourPackageTableProps {
@@ -48,6 +50,7 @@ interface TourPackageTableProps {
   onView: (pkg: TourPackage) => void;
   onEdit: (pkg: TourPackage) => void;
   onDelete: (pkg: TourPackage) => void;
+  onRefresh?: () => void;
 }
 
 export default function TourPackageTable({
@@ -55,7 +58,8 @@ export default function TourPackageTable({
   loading,
   onView,
   onEdit,
-  onDelete
+  onDelete,
+  onRefresh
 }: TourPackageTableProps) {
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
 
@@ -129,6 +133,7 @@ export default function TourPackageTable({
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"></th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Favorite</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Provider / Company</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Tour</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Code</th>
@@ -158,6 +163,17 @@ export default function TourPackageTable({
                           ▶
                         </button>
                       )}
+                    </td>
+                    <td className="px-4 py-4 text-center">
+                      <div className="flex justify-center">
+                        <FavoritePriorityToggle
+                          currentPriority={pkg.favorite_priority || 0}
+                          itemId={pkg.id}
+                          itemType="tour"
+                          onUpdate={onRefresh}
+                          size="sm"
+                        />
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">{pkg.provider_name || 'Not assigned'}</div>
@@ -228,7 +244,7 @@ export default function TourPackageTable({
                   {/* Expandable Pricing Row */}
                   {isExpanded && showPricing && (
                     <tr className="bg-gray-50">
-                      <td colSpan={9} className="px-4 py-4">
+                      <td colSpan={10} className="px-4 py-4">
                         <div className="ml-12 mr-4">
                           <div className="flex items-center justify-between mb-3">
                             <h4 className="text-sm font-semibold text-gray-700">

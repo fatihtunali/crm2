@@ -73,8 +73,8 @@ export async function GET(request: NextRequest) {
     // Parse pagination parameters
     const { page, pageSize, offset } = parseStandardPaginationParams(searchParams);
 
-    // Default sort order
-    const orderBy = 't.from_city ASC, t.to_city ASC, t.start_date DESC';
+    // Default sort order (favorites first, then by route)
+    const orderBy = 't.favorite_priority DESC, t.from_city ASC, t.to_city ASC, t.start_date DESC';
 
     // Build WHERE conditions manually with table qualifiers
     const whereConditions: string[] = [];
@@ -307,8 +307,8 @@ export async function POST(request: NextRequest) {
       `INSERT INTO intercity_transfers (
         organization_id, provider_id, vehicle_id, from_city, to_city, season_name,
         start_date, end_date, price_oneway, price_roundtrip,
-        estimated_duration_hours, notes, status, idempotency_key, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, NOW())`,
+        estimated_duration_hours, notes, status, idempotency_key, favorite_priority, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'active', ?, ?, NOW())`,
       [
         tenantId,
         provider_id || null,
@@ -322,7 +322,8 @@ export async function POST(request: NextRequest) {
         priceRoundtripDecimal,
         estimated_duration_hours || null,
         notes || null,
-        idempotencyKey || null
+        idempotencyKey || null,
+        body.favorite_priority || 0
       ]
     );
 
@@ -447,7 +448,8 @@ export async function PUT(request: NextRequest) {
         price_roundtrip = ?,
         estimated_duration_hours = ?,
         notes = ?,
-        status = ?
+        status = ?,
+        favorite_priority = ?
       WHERE id = ? AND organization_id = ?`,
       [
         provider_id || null,
@@ -462,6 +464,7 @@ export async function PUT(request: NextRequest) {
         estimated_duration_hours || null,
         notes || null,
         status,
+        body.favorite_priority !== undefined ? body.favorite_priority : null,
         id,
         tenantId
       ]

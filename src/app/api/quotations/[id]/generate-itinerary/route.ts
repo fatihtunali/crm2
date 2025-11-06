@@ -349,6 +349,7 @@ async function fetchAvailableHotels(cities: string[], startDate: string, endDate
       h.city,
       h.hotel_category,
       h.star_rating,
+      h.favorite_priority,
       hp.double_room_bb as price,
       hp.single_supplement_bb as single_supplement,
       hp.child_0_6_bb as child_0to2,
@@ -359,7 +360,7 @@ async function fetchAvailableHotels(cities: string[], startDate: string, endDate
       AND ? BETWEEN hp.start_date AND hp.end_date
     WHERE h.status = 'active'
       AND (${cityCondition})
-    ORDER BY h.city, h.star_rating DESC, h.rating DESC
+    ORDER BY h.favorite_priority DESC, h.city, h.star_rating DESC, h.rating DESC
     LIMIT 50
   `, [startDate, ...citiesPattern]) as any[];
 
@@ -377,6 +378,7 @@ async function fetchAvailableTours(cities: string[], startDate: string, endDate:
       t.tour_name,
       t.city,
       t.description,
+      t.favorite_priority,
       tp.sic_price_2_pax as price
     FROM tours t
     LEFT JOIN tour_pricing tp ON t.id = tp.tour_id
@@ -384,7 +386,7 @@ async function fetchAvailableTours(cities: string[], startDate: string, endDate:
       AND ? BETWEEN tp.start_date AND tp.end_date
     WHERE t.status = 'active'
       AND (${cityCondition})
-    ORDER BY t.city, t.tour_name
+    ORDER BY t.favorite_priority DESC, t.city, t.tour_name
     LIMIT 100
   `, [startDate, ...citiesPattern]) as any[];
 
@@ -401,6 +403,7 @@ async function fetchAvailableEntranceFees(cities: string[], startDate: string, e
       e.id,
       e.site_name,
       e.city,
+      e.favorite_priority,
       ep.adult_price as price,
       ep.child_price
     FROM entrance_fees e
@@ -409,7 +412,7 @@ async function fetchAvailableEntranceFees(cities: string[], startDate: string, e
       AND ? BETWEEN ep.start_date AND ep.end_date
     WHERE e.status = 'active'
       AND (${cityCondition})
-    ORDER BY e.city, e.user_ratings_total DESC
+    ORDER BY e.favorite_priority DESC, e.city, e.user_ratings_total DESC
     LIMIT 50
   `, [startDate, ...citiesPattern]) as any[];
 
@@ -427,10 +430,12 @@ async function fetchAvailableTransfers(cities: string[]) {
       v.vehicle_type,
       v.max_capacity,
       v.city,
+      v.favorite_priority,
       50 as price_oneway
     FROM vehicles v
     WHERE v.status = 'active'
       AND (${cityCondition})
+    ORDER BY v.favorite_priority DESC, v.vehicle_type
     LIMIT 20
   `, citiesPattern) as any[];
 
@@ -439,7 +444,7 @@ async function fetchAvailableTransfers(cities: string[]) {
 }
 
 async function createExpense(dayId: number, expense: any, connection?: any) {
-  const queryFn = connection || query;
+  const queryFn = connection?.query || query;
   await queryFn(
     `INSERT INTO quote_expenses (
       quote_day_id, category, hotel_category, location, description,

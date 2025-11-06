@@ -1,4 +1,5 @@
 import { useState, Fragment } from 'react';
+import FavoritePriorityToggle from '@/components/common/FavoritePriorityToggle';
 
 interface Hotel {
   id: number;
@@ -42,6 +43,7 @@ interface Hotel {
   fb_supplement: number | null;
   ai_supplement: number | null;
   base_meal_plan: string | null;
+  favorite_priority?: number;
 }
 
 interface HotelTableProps {
@@ -51,6 +53,7 @@ interface HotelTableProps {
   onEdit: (hotel: Hotel) => void;
   onDelete: (hotel: Hotel) => void;
   onManagePricing: (hotel: Hotel) => void;
+  onRefresh?: () => void;
 }
 
 export default function HotelTable({
@@ -59,7 +62,8 @@ export default function HotelTable({
   onView,
   onEdit,
   onDelete,
-  onManagePricing
+  onManagePricing,
+  onRefresh
 }: HotelTableProps) {
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
 
@@ -169,6 +173,7 @@ export default function HotelTable({
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"></th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Favorite</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Hotel</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">City</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Rating</th>
@@ -197,6 +202,17 @@ export default function HotelTable({
                           ▶
                         </button>
                       )}
+                    </td>
+                    <td className="px-4 py-4 text-center">
+                      <div className="flex justify-center">
+                        <FavoritePriorityToggle
+                          currentPriority={hotel.favorite_priority || 0}
+                          itemId={hotel.id}
+                          itemType="hotel"
+                          onUpdate={onRefresh}
+                          size="sm"
+                        />
+                      </div>
                     </td>
                 <td className="px-6 py-4">
                   <div className="flex items-center">
@@ -278,7 +294,7 @@ export default function HotelTable({
               {/* Expandable Pricing Row */}
               {isExpanded && showPricing && (
                 <tr className="bg-gray-50">
-                  <td colSpan={8} className="px-4 py-4">
+                  <td colSpan={9} className="px-4 py-4">
                     <div className="ml-12 mr-4">
                       <div className="flex items-center justify-between mb-3">
                         <h4 className="text-sm font-semibold text-gray-700">

@@ -3,6 +3,8 @@ import { query } from '@/lib/db';
 import { parsePaginationParams, parseSortParams, buildPagedResponse } from '@/lib/pagination';
 import { checkIdempotencyKey, storeIdempotencyKey } from '@/middleware/idempotency';
 import { toMinorUnits, fromMinorUnits } from '@/lib/money';
+import { checkSeasonOverlap, validatePricingData } from '@/lib/pricing-validation';
+import { requirePermission } from '@/middleware/permissions';
 import type { Money, PagedResponse } from '@/types/api';
 
 interface VehiclePricingRecord {
@@ -142,7 +144,14 @@ export async function GET(request: NextRequest) {
 // POST - Create new pricing record
 export async function POST(request: NextRequest) {
   try {
-    // Check for idempotency key
+    // 1. Authenticate and get user
+    const authResult = await requirePermission(request, 'pricing', 'create');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user } = authResult;
+
+    // 2. Check for idempotency key
     const idempotencyKey = request.headers.get('Idempotency-Key');
 
     if (idempotencyKey) {
@@ -168,7 +177,7 @@ export async function POST(request: NextRequest) {
       `INSERT INTO vehicle_pricing (
         vehicle_id, season_name, start_date, end_date, currency,
         price_per_day, price_half_day, notes, status, effective_from, created_by
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), 3)`,
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'active', NOW(), ?)`,
       [
         vehicle_id,
         season_name,
@@ -177,7 +186,8 @@ export async function POST(request: NextRequest) {
         currency,
         fromMinorUnits(price_per_day.amount_minor),
         fromMinorUnits(price_half_day.amount_minor),
-        notes
+        notes,
+        user.userId
       ]
     );
 

@@ -46,6 +46,11 @@ interface TourPackage {
   pvt_price_6_pax: number | null;
   pvt_price_8_pax: number | null;
   pvt_price_10_pax: number | null;
+  sic_provider_id: number | null;
+  sic_provider_name: string | null;
+  pvt_provider_id: number | null;
+  pvt_provider_name: string | null;
+  favorite_priority?: number;
 }
 
 export default function TourPackagesPage() {
@@ -243,6 +248,7 @@ export default function TourPackagesPage() {
         onView={handleView}
         onEdit={handleEdit}
         onDelete={handleDelete}
+        onRefresh={fetchPackages}
       />
 
       {/* Modals */}

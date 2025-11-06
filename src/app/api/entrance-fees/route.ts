@@ -67,11 +67,11 @@ export async function GET(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const { page, pageSize, offset } = parseStandardPaginationParams(searchParams);
 
-    // 4. Parse sort (default: city, site_name)
-    const sortParam = searchParams.get('sort') || 'ef.city,ef.site_name';
+    // 4. Parse sort (default: favorites first, then city, site_name)
+    const sortParam = searchParams.get('sort') || '-favorite_priority,ef.city,ef.site_name';
     // SECURITY: Whitelist allowed columns to prevent SQL injection
-    const ALLOWED_COLUMNS = ['id', 'site_name', 'city', 'description', 'status', 'created_at', 'updated_at'];
-    const orderByClause = parseSortParams(sortParam, ALLOWED_COLUMNS) || 'ef.city ASC, ef.site_name ASC';
+    const ALLOWED_COLUMNS = ['id', 'site_name', 'city', 'description', 'status', 'created_at', 'updated_at', 'favorite_priority'];
+    const orderByClause = parseSortParams(sortParam, ALLOWED_COLUMNS) || 'ef.favorite_priority DESC, ef.city ASC, ef.site_name ASC';
 
     // 5. Build WHERE conditions
     const whereConditions: string[] = [];
@@ -112,19 +112,19 @@ export async function GET(request: NextRequest) {
 
     const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : '';
 
-    // 6. Build base query
+    // 6. Build base query with GROUP BY to prevent duplicates from pricing join
     const baseSelect = `
       SELECT
         ef.*,
         p.provider_name,
-        efp.id as pricing_id,
-        efp.season_name,
-        efp.start_date as season_start,
-        efp.end_date as season_end,
-        efp.currency,
-        efp.adult_price,
-        efp.child_price,
-        efp.student_price
+        MAX(efp.id) as pricing_id,
+        MAX(efp.season_name) as season_name,
+        MAX(efp.start_date) as season_start,
+        MAX(efp.end_date) as season_end,
+        MAX(efp.currency) as currency,
+        MAX(efp.adult_price) as adult_price,
+        MAX(efp.child_price) as child_price,
+        MAX(efp.student_price) as student_price
       FROM entrance_fees ef
       LEFT JOIN providers p ON ef.provider_id = p.id
       LEFT JOIN entrance_fee_pricing efp ON ef.id = efp.entrance_fee_id
@@ -135,10 +135,6 @@ export async function GET(request: NextRequest) {
     const baseCount = `
       SELECT COUNT(DISTINCT ef.id) as count
       FROM entrance_fees ef
-      LEFT JOIN providers p ON ef.provider_id = p.id
-      LEFT JOIN entrance_fee_pricing efp ON ef.id = efp.entrance_fee_id
-        AND efp.status = 'active'
-        AND CURDATE() BETWEEN efp.start_date AND efp.end_date
     `;
 
     // 7. Build complete SQL queries
@@ -149,6 +145,9 @@ export async function GET(request: NextRequest) {
       dataSql += ` WHERE ${whereClause}`;
       countSql += ` WHERE ${whereClause}`;
     }
+
+    // Add GROUP BY to eliminate duplicates from pricing join
+    dataSql += ` GROUP BY ef.id, p.provider_name`;
 
     dataSql += ` ORDER BY ${orderByClause} LIMIT ? OFFSET ?`;
     const dataParams = [...params, pageSize, offset];
@@ -297,6 +296,18 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // Validate favorite_priority (0-10)
+    if (body.favorite_priority !== undefined && body.favorite_priority !== null) {
+      const priority = parseInt(body.favorite_priority);
+      if (isNaN(priority) || priority < 0 || priority > 10) {
+        validationErrors.push({
+          field: 'favorite_priority',
+          issue: 'invalid_range',
+          message: 'Favorite priority must be between 0 and 10'
+        });
+      }
+    }
+
     if (validationErrors.length > 0) {
       return validationErrorResponse(
         'Invalid request data',
@@ -310,7 +321,7 @@ export async function POST(request: NextRequest) {
       'google_place_id', 'organization_id', 'site_name', 'city', 'description',
       'latitude', 'longitude', 'google_maps_url',
       'photo_url_1', 'photo_url_2', 'photo_url_3',
-      'rating', 'user_ratings_total', 'website', 'status'
+      'rating', 'user_ratings_total', 'website', 'status', 'favorite_priority'
     ];
 
     const insertValues = [
@@ -328,7 +339,8 @@ export async function POST(request: NextRequest) {
       body.rating || null,
       body.user_ratings_total || null,
       body.website || null,
-      'active'
+      'active',
+      body.favorite_priority || 0
     ];
 
     // Add idempotency_key if provided
@@ -441,6 +453,18 @@ export async function PUT(request: NextRequest) {
       );
     }
 
+    // Validate favorite_priority if provided
+    if (updateFields.favorite_priority !== undefined && updateFields.favorite_priority !== null) {
+      const priority = parseInt(updateFields.favorite_priority);
+      if (isNaN(priority) || priority < 0 || priority > 10) {
+        return validationErrorResponse(
+          'Invalid request data',
+          [{ field: 'favorite_priority', issue: 'invalid_range', message: 'Favorite priority must be between 0 and 10' }],
+          requestId
+        );
+      }
+    }
+
     // 4. SECURITY: Update only if belongs to user's organization
     await query(
       `UPDATE entrance_fees SET
@@ -458,7 +482,8 @@ export async function PUT(request: NextRequest) {
         rating = ?,
         user_ratings_total = ?,
         website = ?,
-        status = ?
+        status = ?,
+        favorite_priority = ?
       WHERE id = ? AND organization_id = ?`,
       [
         updateFields.provider_id !== undefined ? updateFields.provider_id : existingFee.provider_id,
@@ -476,6 +501,7 @@ export async function PUT(request: NextRequest) {
         updateFields.user_ratings_total !== undefined ? updateFields.user_ratings_total : existingFee.user_ratings_total,
         updateFields.website !== undefined ? updateFields.website : existingFee.website,
         updateFields.status !== undefined ? updateFields.status : existingFee.status,
+        updateFields.favorite_priority !== undefined ? updateFields.favorite_priority : existingFee.favorite_priority,
         id,
         parseInt(tenantId)
       ]

@@ -338,7 +338,7 @@ export default function ManagePricingModal({ isOpen, onClose, tourId, tourName }
                         <input
                           type="number"
                           step="0.01"
-                          value={formData[`sic_price_${pax}_pax` as keyof typeof formData]}
+                          value={formData[`sic_price_${pax}_pax` as keyof typeof formData] || ''}
                           onChange={(e) => setFormData({...formData, [`sic_price_${pax}_pax`]: e.target.value})}
                           className="flex-1 px-3 py-1 border border-gray-300 rounded"
                           placeholder="0.00"
@@ -376,7 +376,7 @@ export default function ManagePricingModal({ isOpen, onClose, tourId, tourName }
                         <input
                           type="number"
                           step="0.01"
-                          value={formData[`pvt_price_${pax}_pax` as keyof typeof formData]}
+                          value={formData[`pvt_price_${pax}_pax` as keyof typeof formData] || ''}
                           onChange={(e) => setFormData({...formData, [`pvt_price_${pax}_pax`]: e.target.value})}
                           className="flex-1 px-3 py-1 border border-gray-300 rounded"
                           placeholder="0.00"

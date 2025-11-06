@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import FavoritePriorityField from '@/components/common/FavoritePriorityField';
 
 interface NewProviderModalProps {
   isOpen: boolean;
@@ -28,7 +29,8 @@ export default function NewProviderModal({ isOpen, onClose, onSuccess }: NewProv
     is_parent: false,
     parent_provider_id: '',
     company_tax_id: '',
-    company_legal_name: ''
+    company_legal_name: '',
+    favorite_priority: 0
   });
   const [formSubmitting, setFormSubmitting] = useState(false);
   const [formError, setFormError] = useState('');
@@ -99,7 +101,8 @@ export default function NewProviderModal({ isOpen, onClose, onSuccess }: NewProv
           company_tax_id: formData.company_tax_id || null,
           company_legal_name: formData.company_legal_name || null,
           notes: formData.notes || null,
-          status: formData.status
+          status: formData.status,
+          favorite_priority: formData.favorite_priority
         })
       });
 
@@ -120,7 +123,8 @@ export default function NewProviderModal({ isOpen, onClose, onSuccess }: NewProv
         is_parent: false,
         parent_provider_id: '',
         company_tax_id: '',
-        company_legal_name: ''
+        company_legal_name: '',
+        favorite_priority: 0
       });
       onSuccess();
       onClose();
@@ -384,6 +388,14 @@ export default function NewProviderModal({ isOpen, onClose, onSuccess }: NewProv
                     />
                   </div>
                 </div>
+              </div>
+
+              {/* Favorite Priority */}
+              <div className="border-t border-gray-200 pt-4">
+                <FavoritePriorityField
+                  value={formData.favorite_priority || 0}
+                  onChange={(val) => setFormData({ ...formData, favorite_priority: val })}
+                />
               </div>
             </div>
           </div>

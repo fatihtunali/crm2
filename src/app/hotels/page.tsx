@@ -53,6 +53,7 @@ interface Hotel {
   fb_supplement: number | null;
   ai_supplement: number | null;
   base_meal_plan: string | null;
+  favorite_priority?: number;
 }
 
 export default function HotelsPage() {
@@ -275,6 +276,7 @@ export default function HotelsPage() {
         onEdit={handleEdit}
         onDelete={handleDelete}
         onManagePricing={handleManagePricing}
+        onRefresh={fetchHotels}
       />
 
       {/* Pagination */}

@@ -45,9 +45,19 @@ export default function ManagePricingModal({ isOpen, onClose, vehicleId, vehicle
   async function fetchPricing() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/vehicle-pricing?vehicle_id=${vehicleId}`);
+      const res = await fetch(`/api/vehicle-pricing?vehicle_id=${vehicleId}&status=active`);
       const data = await res.json();
-      setPricingRecords(Array.isArray(data) ? data : []);
+
+      // API returns paginated response: { data: [...], total: X }
+      // Convert Money format (amount_minor) to plain numbers
+      const records = Array.isArray(data.data) ? data.data.map((record: any) => ({
+        ...record,
+        price_per_day: record.price_per_day?.amount_minor ? record.price_per_day.amount_minor / 100 : null,
+        price_half_day: record.price_half_day?.amount_minor ? record.price_half_day.amount_minor / 100 : null,
+        currency: record.price_per_day?.currency || record.currency || 'EUR'
+      })) : [];
+
+      setPricingRecords(records);
     } catch (error) {
       console.error('Failed to fetch pricing:', error);
       setPricingRecords([]);
@@ -86,32 +96,50 @@ export default function ManagePricingModal({ isOpen, onClose, vehicleId, vehicle
 
   async function handleSave() {
     try {
+      // Convert prices to Money format (amount_minor = cents)
+      const toMoney = (value: string) => {
+        const amount = parseFloat(value);
+        return isNaN(amount) ? { amount_minor: 0, currency: formData.currency } : { amount_minor: Math.round(amount * 100), currency: formData.currency };
+      };
+
       const payload = {
-        ...formData,
-        price_per_day: formData.price_per_day ? parseFloat(formData.price_per_day) : null,
-        price_half_day: formData.price_half_day ? parseFloat(formData.price_half_day) : null,
+        season_name: formData.season_name,
+        start_date: formData.start_date,
+        end_date: formData.end_date,
+        currency: formData.currency,
+        price_per_day: toMoney(formData.price_per_day),
+        price_half_day: toMoney(formData.price_half_day),
+        notes: formData.notes
       };
 
       if (editingId) {
-        await fetch('/api/vehicle-pricing', {
+        const res = await fetch('/api/vehicle-pricing', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: editingId, ...payload, status: 'active' })
         });
+        if (!res.ok) {
+          const error = await res.json();
+          throw new Error(error.error || 'Failed to update pricing');
+        }
       } else {
-        await fetch('/api/vehicle-pricing', {
+        const res = await fetch('/api/vehicle-pricing', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ vehicle_id: vehicleId, ...payload })
         });
+        if (!res.ok) {
+          const error = await res.json();
+          throw new Error(error.error || 'Failed to create pricing');
+        }
       }
 
       setEditingId(null);
       setShowNewForm(false);
       fetchPricing();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to save pricing:', error);
-      alert('Failed to save pricing');
+      alert(error.message || 'Failed to save pricing');
     }
   }
 

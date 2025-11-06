@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useAuth } from '@/contexts/AuthContext';
+import FavoritePriorityField from '@/components/common/FavoritePriorityField';
 
 interface Vehicle {
   id: number;
@@ -35,7 +36,8 @@ export default function EditVehicleModal({ isOpen, onClose, onSuccess, vehicle }
     max_capacity: '',
     city: '',
     description: '',
-    status: 'active'
+    status: 'active',
+    favorite_priority: 0
   });
   const [providers, setProviders] = useState<Provider[]>([]);
   const [formSubmitting, setFormSubmitting] = useState(false);
@@ -54,7 +56,8 @@ export default function EditVehicleModal({ isOpen, onClose, onSuccess, vehicle }
         max_capacity: vehicle.max_capacity.toString(),
         city: vehicle.city,
         description: vehicle.description || '',
-        status: vehicle.status
+        status: vehicle.status,
+        favorite_priority: (vehicle as any).favorite_priority || 0
       });
     }
   }, [vehicle]);
@@ -113,7 +116,8 @@ export default function EditVehicleModal({ isOpen, onClose, onSuccess, vehicle }
           max_capacity: parseInt(formData.max_capacity),
           city: formData.city,
           description: formData.description || null,
-          status: formData.status
+          status: formData.status,
+          favorite_priority: formData.favorite_priority
         })
       });
 
@@ -254,6 +258,14 @@ export default function EditVehicleModal({ isOpen, onClose, onSuccess, vehicle }
                   rows={4}
                   className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-primary-500 focus:border-transparent"
                   placeholder="Additional details about the vehicle (features, amenities, etc.)"
+                />
+              </div>
+
+              {/* Favorite Priority */}
+              <div className="border-t border-gray-200 pt-4">
+                <FavoritePriorityField
+                  value={formData.favorite_priority || 0}
+                  onChange={(val) => setFormData({ ...formData, favorite_priority: val })}
                 />
               </div>
             </div>

@@ -1,4 +1,5 @@
 import { useState, Fragment } from 'react';
+import FavoritePriorityToggle from '@/components/common/FavoritePriorityToggle';
 
 interface Vehicle {
   id: number;
@@ -18,6 +19,7 @@ interface Vehicle {
   currency: string | null;
   price_per_day: number | null;
   price_half_day: number | null;
+  favorite_priority?: number;
 }
 
 interface VehicleTableProps {
@@ -26,6 +28,7 @@ interface VehicleTableProps {
   onView: (vehicle: Vehicle) => void;
   onEdit: (vehicle: Vehicle) => void;
   onDelete: (vehicle: Vehicle) => void;
+  onRefresh?: () => void;
 }
 
 export default function VehicleTable({
@@ -33,7 +36,8 @@ export default function VehicleTable({
   loading,
   onView,
   onEdit,
-  onDelete
+  onDelete,
+  onRefresh
 }: VehicleTableProps) {
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
 
@@ -106,6 +110,7 @@ export default function VehicleTable({
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"></th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Favorite</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Provider / Company</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Vehicle Type</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Max Capacity</th>
@@ -131,6 +136,17 @@ export default function VehicleTable({
                       >
                         ▶
                       </button>
+                    </td>
+                    <td className="px-4 py-4 text-center">
+                      <div className="flex justify-center">
+                        <FavoritePriorityToggle
+                          currentPriority={vehicle.favorite_priority || 0}
+                          itemId={vehicle.id}
+                          itemType="vehicle"
+                          onUpdate={onRefresh}
+                          size="sm"
+                        />
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">{vehicle.provider_name || 'Not assigned'}</div>
@@ -186,7 +202,7 @@ export default function VehicleTable({
                   {/* Expandable Pricing Row */}
                   {isExpanded && (
                     <tr className="bg-gray-50">
-                      <td colSpan={8} className="px-4 py-4">
+                      <td colSpan={9} className="px-4 py-4">
                         <div className="ml-12 mr-4">
                           <div className="flex items-center justify-between mb-3">
                             <h4 className="text-sm font-semibold text-gray-700">

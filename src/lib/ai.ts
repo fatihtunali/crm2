@@ -70,7 +70,8 @@ ${JSON.stringify(availableHotels.map((h: any) => ({
   name: h.hotel_name,
   city: h.city,
   star_rating: h.star_rating,
-  price_per_night: h.price || 100
+  price_per_night: h.price || 100,
+  favorite_priority: h.favorite_priority || 0
 })), null, 2)}
 
 **Available Tours:**
@@ -80,7 +81,8 @@ ${JSON.stringify(availableTours.map((t: any) => ({
   city: t.city,
   duration_hours: t.duration_hours,
   description: t.description,
-  price_per_person: t.price || 75
+  price_per_person: t.price || 75,
+  favorite_priority: t.favorite_priority || 0
 })), null, 2)}
 
 **Available Entrance Fees:**
@@ -89,7 +91,8 @@ ${JSON.stringify(availableEntranceFees.map((e: any) => ({
   site_name: e.site_name,
   city: e.city,
   adult_price: e.price || 15,
-  child_price: e.child_price || 10
+  child_price: e.child_price || 10,
+  favorite_priority: e.favorite_priority || 0
 })), null, 2)}
 
 **Available Transfers:**
@@ -98,7 +101,8 @@ ${JSON.stringify(availableTransfers.map((t: any) => ({
   vehicle_type: t.vehicle_type,
   city: t.city,
   capacity: t.max_capacity,
-  price: 50
+  price: 50,
+  favorite_priority: t.favorite_priority || 0
 })), null, 2)}
 
 **CRITICAL INSTRUCTIONS:**
@@ -108,15 +112,21 @@ ${JSON.stringify(availableTransfers.map((t: any) => ({
    - Select relevant tours (use tour id from availableTours)
    - Select entrance fees for attractions (use id from availableEntranceFees)
    - Select transfers (use vehicle id from availableTransfers)
-3. 🚨 **MAXIMUM ONE TOUR PER DAY** - NEVER add multiple tours on the same day
-4. 🚨 **MANDATORY AIRPORT TRANSFERS**:
+3. 🚨 **PRIORITIZE FAVORITES**: Items with higher favorite_priority (1-10) are preferred choices by the tour operator:
+   - Priority 8-10 = Top favorites - STRONGLY prefer these options when available
+   - Priority 5-7 = Preferred options - select these when suitable
+   - Priority 1-4 = Secondary favorites - use if top favorites aren't available
+   - Priority 0 = Standard options - use when no favorites are available
+   - ALWAYS consider favorite_priority when making selections, but balance with availability, location, and customer needs
+4. 🚨 **MAXIMUM ONE TOUR PER DAY** - NEVER add multiple tours on the same day
+5. 🚨 **MANDATORY AIRPORT TRANSFERS**:
    - Day 1: MUST include arrival transfer (from Airport to Hotel)
    - Last day: MUST include departure transfer (from Hotel to Airport)
-5. Balance the itinerary - don't overload days
-6. Consider logical flow and timing
-7. Include engaging narratives for each day (2-3 paragraphs)
-8. Provide a catchy title for each day (e.g., "Day 1 - Arrival in Istanbul & Turkish Night")
-9. Specify meals included (e.g., "(B,L,D)" for Breakfast, Lunch, Dinner)
+6. Balance the itinerary - don't overload days
+7. Consider logical flow and timing
+8. Include engaging narratives for each day (2-3 paragraphs)
+9. Provide a catchy title for each day (e.g., "Day 1 - Arrival in Istanbul & Turkish Night")
+10. Specify meals included (e.g., "(B,L,D)" for Breakfast, Lunch, Dinner)
 
 **IMPORTANT TRAINING EXAMPLE:**
 "Day 1 - Arrive Istanbul - Bosphorus Cruise

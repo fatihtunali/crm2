@@ -62,12 +62,14 @@ export default function ManageSeasonsModal({ isOpen, onClose, restaurantName, re
   async function fetchSeasons() {
     setLoading(true);
     try {
-      const res = await fetch('/api/restaurants');
+      const res = await fetch('/api/restaurants?status=active&limit=1000');
       const data = await res.json();
+
+      // API returns paginated response: { data: [...], total: X }
       // Filter records for this restaurant
-      const filtered = Array.isArray(data)
-        ? data.filter((r: SeasonRecord) => r.restaurant_name === restaurantName)
-        : [];
+      const allRecords = Array.isArray(data.data) ? data.data : [];
+      const filtered = allRecords.filter((r: SeasonRecord) => r.restaurant_name === restaurantName);
+
       setSeasonRecords(filtered);
 
       // Get the first record to populate city and meal_type for new records

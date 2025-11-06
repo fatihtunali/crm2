@@ -24,6 +24,7 @@ interface ExtraExpense {
   status: string;
   created_at: string;
   updated_at: string;
+  favorite_priority?: number;
 }
 
 export default function ExtraExpensesPage() {
@@ -220,6 +221,7 @@ export default function ExtraExpensesPage() {
         onView={handleView}
         onEdit={handleEdit}
         onDelete={handleDelete}
+        onRefresh={fetchExpenses}
       />
 
       {/* Modals */}

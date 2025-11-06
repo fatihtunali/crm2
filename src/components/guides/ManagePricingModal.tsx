@@ -47,9 +47,20 @@ export default function ManagePricingModal({ isOpen, onClose, guideId, guideName
   async function fetchPricing() {
     setLoading(true);
     try {
-      const res = await fetch(`/api/guide-pricing?guide_id=${guideId}`);
+      const res = await fetch(`/api/guide-pricing?guide_id=${guideId}&status=active`);
       const data = await res.json();
-      setPricingRecords(Array.isArray(data) ? data : []);
+
+      // API returns paginated response: { data: [...], total: X }
+      // Convert Money format (amount_minor) to plain numbers
+      const records = Array.isArray(data.data) ? data.data.map((record: any) => ({
+        ...record,
+        full_day_price: record.full_day_price?.amount_minor ? record.full_day_price.amount_minor / 100 : null,
+        half_day_price: record.half_day_price?.amount_minor ? record.half_day_price.amount_minor / 100 : null,
+        night_price: record.night_price?.amount_minor ? record.night_price.amount_minor / 100 : null,
+        currency: record.full_day_price?.currency || record.currency || 'EUR'
+      })) : [];
+
+      setPricingRecords(records);
     } catch (error) {
       console.error('Failed to fetch pricing:', error);
       setPricingRecords([]);
@@ -90,33 +101,51 @@ export default function ManagePricingModal({ isOpen, onClose, guideId, guideName
 
   async function handleSave() {
     try {
+      // Convert prices to Money format (amount_minor = cents)
+      const toMoney = (value: string) => {
+        const amount = parseFloat(value);
+        return isNaN(amount) ? { amount_minor: 0, currency: formData.currency } : { amount_minor: Math.round(amount * 100), currency: formData.currency };
+      };
+
       const payload = {
-        ...formData,
-        full_day_price: formData.full_day_price ? parseFloat(formData.full_day_price) : null,
-        half_day_price: formData.half_day_price ? parseFloat(formData.half_day_price) : null,
-        night_price: formData.night_price ? parseFloat(formData.night_price) : null,
+        season_name: formData.season_name,
+        start_date: formData.start_date,
+        end_date: formData.end_date,
+        currency: formData.currency,
+        full_day_price: toMoney(formData.full_day_price),
+        half_day_price: toMoney(formData.half_day_price),
+        night_price: toMoney(formData.night_price),
+        notes: formData.notes
       };
 
       if (editingId) {
-        await fetch('/api/guide-pricing', {
+        const res = await fetch('/api/guide-pricing', {
           method: 'PUT',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ id: editingId, ...payload, status: 'active' })
         });
+        if (!res.ok) {
+          const error = await res.json();
+          throw new Error(error.error || 'Failed to update pricing');
+        }
       } else {
-        await fetch('/api/guide-pricing', {
+        const res = await fetch('/api/guide-pricing', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ guide_id: guideId, ...payload })
         });
+        if (!res.ok) {
+          const error = await res.json();
+          throw new Error(error.error || 'Failed to create pricing');
+        }
       }
 
       setEditingId(null);
       setShowNewForm(false);
       fetchPricing();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to save pricing:', error);
-      alert('Failed to save pricing');
+      alert(error.message || 'Failed to save pricing');
     }
   }
 

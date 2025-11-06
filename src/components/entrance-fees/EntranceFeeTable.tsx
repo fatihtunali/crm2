@@ -1,4 +1,5 @@
 import { useState, Fragment } from 'react';
+import FavoritePriorityToggle from '@/components/common/FavoritePriorityToggle';
 
 interface EntranceFee {
   id: number;
@@ -27,6 +28,7 @@ interface EntranceFee {
   adult_price: number | null;
   child_price: number | null;
   student_price: number | null;
+  favorite_priority?: number;
 }
 
 interface EntranceFeeTableProps {
@@ -36,6 +38,7 @@ interface EntranceFeeTableProps {
   onEdit: (fee: EntranceFee) => void;
   onDelete: (fee: EntranceFee) => void;
   onManagePricing: (fee: EntranceFee) => void;
+  onRefresh?: () => void;
 }
 
 export default function EntranceFeeTable({
@@ -44,7 +47,8 @@ export default function EntranceFeeTable({
   onView,
   onEdit,
   onDelete,
-  onManagePricing
+  onManagePricing,
+  onRefresh
 }: EntranceFeeTableProps) {
   const [expandedRows, setExpandedRows] = useState<Set<number>>(new Set());
 
@@ -114,6 +118,7 @@ export default function EntranceFeeTable({
           <thead className="bg-gray-50 border-b border-gray-200">
             <tr>
               <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider w-12"></th>
+              <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider w-24">Favorite</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Provider / Company</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Site</th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">City</th>
@@ -139,6 +144,17 @@ export default function EntranceFeeTable({
                       >
                         ▶
                       </button>
+                    </td>
+                    <td className="px-4 py-4 text-center">
+                      <div className="flex justify-center">
+                        <FavoritePriorityToggle
+                          currentPriority={fee.favorite_priority || 0}
+                          itemId={fee.id}
+                          itemType="entrance-fee"
+                          onUpdate={onRefresh}
+                          size="sm"
+                        />
+                      </div>
                     </td>
                     <td className="px-6 py-4 whitespace-nowrap">
                       <div className="text-sm font-medium text-gray-900">{fee.provider_name || 'Not assigned'}</div>
@@ -222,7 +238,7 @@ export default function EntranceFeeTable({
                   {/* Expandable Pricing Details Row */}
                   {isExpanded && (
                     <tr>
-                      <td colSpan={8} className="px-6 py-4 bg-gray-50">
+                      <td colSpan={9} className="px-6 py-4 bg-gray-50">
                         <div className="grid grid-cols-2 gap-4">
                           {/* Entrance Fee Pricing Table */}
                           <div>

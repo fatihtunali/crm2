@@ -223,3 +223,141 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Failed to create pricing' }, { status: 500 });
   }
 }
+
+// PUT - Update existing entrance fee pricing record
+export async function PUT(request: NextRequest) {
+  try {
+    const authResult = await requirePermission(request, 'pricing', 'update');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+    const { user } = authResult;
+
+    const body = await request.json();
+    const {
+      id,
+      season_name,
+      start_date,
+      end_date,
+      currency,
+      adult_price,
+      child_price,
+      student_price,
+      notes,
+      status
+    } = body;
+
+    if (!id) {
+      return NextResponse.json({ error: 'Pricing ID is required' }, { status: 400 });
+    }
+
+    // Validate pricing data format
+    const validation = validatePricingData({ start_date, end_date, season_name });
+    if (!validation.valid) {
+      return NextResponse.json({ error: validation.error }, { status: 400 });
+    }
+
+    // Get current record to check entrance_fee_id
+    const currentRecord = await query<EntranceFeePricingRecord>(
+      'SELECT * FROM entrance_fee_pricing WHERE id = ?',
+      [id]
+    );
+
+    if (!currentRecord || currentRecord.length === 0) {
+      return NextResponse.json({ error: 'Pricing record not found' }, { status: 404 });
+    }
+
+    const entranceFeeId = currentRecord[0].entrance_fee_id;
+
+    // Check for season overlaps (excluding current record)
+    const overlapResult = await checkSeasonOverlap(
+      'entrance_fee_pricing',
+      'entrance_fee_id',
+      entranceFeeId,
+      start_date,
+      end_date,
+      id
+    );
+
+    if (overlapResult.hasOverlap) {
+      return NextResponse.json(
+        {
+          error: overlapResult.message,
+          conflicting_seasons: overlapResult.conflictingSeasons
+        },
+        { status: 409 }
+      );
+    }
+
+    await query(
+      `UPDATE entrance_fee_pricing SET
+        season_name = ?, start_date = ?, end_date = ?, currency = ?,
+        adult_price = ?, child_price = ?, student_price = ?,
+        notes = ?, status = ?
+      WHERE id = ?`,
+      [
+        season_name, start_date, end_date, currency,
+        fromMinorUnits(adult_price.amount_minor),
+        fromMinorUnits(child_price.amount_minor),
+        fromMinorUnits(student_price.amount_minor),
+        notes, status || 'active', id
+      ]
+    );
+
+    // Fetch updated record
+    const updated = await query<EntranceFeePricingRecord>(
+      'SELECT * FROM entrance_fee_pricing WHERE id = ?',
+      [id]
+    );
+
+    const updatedRecord = updated[0];
+    if (!updatedRecord) {
+      return NextResponse.json({ error: 'Failed to fetch updated record' }, { status: 500 });
+    }
+
+    const responseData = convertToResponse(updatedRecord);
+
+    return NextResponse.json(responseData);
+  } catch (error) {
+    console.error('Database error:', error);
+    return NextResponse.json({ error: 'Failed to update pricing' }, { status: 500 });
+  }
+}
+
+// DELETE - Delete entrance fee pricing record (soft delete)
+export async function DELETE(request: NextRequest) {
+  try {
+    const authResult = await requirePermission(request, 'pricing', 'delete');
+    if ('error' in authResult) {
+      return authResult.error;
+    }
+
+    const body = await request.json();
+    const { id } = body;
+
+    if (!id) {
+      return NextResponse.json({ error: 'Pricing ID is required' }, { status: 400 });
+    }
+
+    // Check if record exists
+    const existing = await query<EntranceFeePricingRecord>(
+      'SELECT * FROM entrance_fee_pricing WHERE id = ?',
+      [id]
+    );
+
+    if (!existing || existing.length === 0) {
+      return NextResponse.json({ error: 'Pricing record not found' }, { status: 404 });
+    }
+
+    // Soft delete by setting status to 'archived'
+    await query(
+      'UPDATE entrance_fee_pricing SET status = ?, updated_at = NOW() WHERE id = ?',
+      ['archived', id]
+    );
+
+    return NextResponse.json({ success: true, message: 'Pricing record deleted successfully' });
+  } catch (error) {
+    console.error('Database error:', error);
+    return NextResponse.json({ error: 'Failed to delete pricing' }, { status: 500 });
+  }
+}

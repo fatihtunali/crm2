@@ -15,6 +15,21 @@ export default function SupplierSearch({ category, location, date, onSelect, onC
   const [results, setResults] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
 
+  // Map quotation categories to API supplier types
+  function mapCategoryToType(category: string): string {
+    const mapping: { [key: string]: string } = {
+      'hotelAccommodation': 'hotel',
+      'sicTourCost': 'tour_package',
+      'transportation': 'transfer',
+      'entranceFees': 'entrance_fee',
+      'guide': 'guide',
+      'meal': 'restaurant',
+      'parking': 'extra_expense',
+      'other': 'extra_expense'
+    };
+    return mapping[category] || category;
+  }
+
   useEffect(() => {
     searchSuppliers();
   }, [searchTerm, location, date]);
@@ -24,8 +39,9 @@ export default function SupplierSearch({ category, location, date, onSelect, onC
 
     setLoading(true);
     try {
+      const supplierType = mapCategoryToType(category);
       const params = new URLSearchParams({
-        category,
+        type: supplierType,
         ...(location && { location }),
         ...(date && { date }),
         ...(searchTerm && { search: searchTerm })
@@ -33,7 +49,10 @@ export default function SupplierSearch({ category, location, date, onSelect, onC
 
       const res = await fetch(`/api/suppliers/search?${params.toString()}`);
       const data = await res.json();
-      setResults(Array.isArray(data) ? data : []);
+
+      // Handle both array responses and paged responses
+      const items = Array.isArray(data) ? data : (data.data || []);
+      setResults(items);
     } catch (error) {
       console.error('Failed to search suppliers:', error);
       setResults([]);

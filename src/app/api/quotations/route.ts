@@ -477,72 +477,71 @@ export async function PUT(request: NextRequest) {
     }
 
     // SECURITY: Update only if belongs to user's organization
-    const {
-      quote_name,
-      category,
-      customer_name,
-      customer_email,
-      customer_phone,
-      destination,
-      start_date,
-      end_date,
-      tour_type,
-      pax,
-      adults,
-      children,
-      markup,
-      tax,
-      transport_pricing_mode,
-      season_name,
-      valid_from,
-      valid_to,
-      status,
-      total_price,
-      pricing_table
-    } = updateFields;
+    // Build dynamic UPDATE query with only provided fields
+    const updateClauses: string[] = [];
+    const updateValues: any[] = [];
+
+    // Map of allowed fields to update
+    const allowedFields: Record<string, boolean> = {
+      category: true,
+      customer_name: true,
+      customer_email: true,
+      customer_phone: true,
+      destination: true,
+      start_date: true,
+      end_date: true,
+      tour_type: true,
+      pax: true,
+      adults: true,
+      children: true,
+      markup: true,
+      tax: true,
+      transport_pricing_mode: true,
+      season_name: true,
+      valid_from: true,
+      valid_to: true,
+      status: true,
+      total_price: true,
+      pricing_table: true
+    };
+
+    // Build UPDATE clauses for provided fields only
+    for (const [key, value] of Object.entries(updateFields)) {
+      if (allowedFields[key] && value !== undefined) {
+        updateClauses.push(`${key} = ?`);
+        if (key === 'pricing_table' && value) {
+          updateValues.push(JSON.stringify(value));
+        } else if (key === 'valid_from' || key === 'valid_to') {
+          updateValues.push(value || null);
+        } else {
+          updateValues.push(value);
+        }
+      }
+    }
+
+    if (updateClauses.length === 0) {
+      return validationErrorResponse(
+        'No valid fields to update',
+        [{ field: 'body', issue: 'required', message: 'At least one field to update is required' }],
+        requestId
+      );
+    }
+
+    // Add WHERE clause parameters
+    updateValues.push(id, parseInt(tenantId));
 
     await query(
-      `UPDATE quotes SET
-        quote_name = ?, category = ?, customer_name = ?, customer_email = ?,
-        customer_phone = ?, destination = ?, start_date = ?, end_date = ?,
-        tour_type = ?, pax = ?, adults = ?, children = ?, markup = ?, tax = ?,
-        transport_pricing_mode = ?, season_name = ?, valid_from = ?, valid_to = ?,
-        status = ?, total_price = ?, pricing_table = ?
-      WHERE id = ? AND organization_id = ?`,
-      [
-        quote_name,
-        category,
-        customer_name,
-        customer_email,
-        customer_phone,
-        destination,
-        start_date,
-        end_date,
-        tour_type,
-        pax,
-        adults,
-        children,
-        markup,
-        tax,
-        transport_pricing_mode,
-        season_name,
-        valid_from || null,
-        valid_to || null,
-        status,
-        total_price,
-        pricing_table ? JSON.stringify(pricing_table) : null,
-        id,
-        parseInt(tenantId)
-      ]
+      `UPDATE quotes SET ${updateClauses.join(', ')} WHERE id = ? AND organization_id = ?`,
+      updateValues
     );
 
     // AUDIT: Log quotation update with changes
     const changes: Record<string, any> = {};
-    if (customer_name !== existingQuote.customer_name) changes.customer_name = customer_name;
-    if (customer_email !== existingQuote.customer_email) changes.customer_email = customer_email;
-    if (destination !== existingQuote.destination) changes.destination = destination;
-    if (status !== existingQuote.status) changes.status = status;
-    if (total_price !== existingQuote.total_price) changes.total_price = total_price;
+    for (const [key, value] of Object.entries(updateFields)) {
+      if (allowedFields[key] && value !== existingQuote[key]) {
+        changes[key] = value;
+      }
+    }
 
     await auditLog(
       parseInt(tenantId),

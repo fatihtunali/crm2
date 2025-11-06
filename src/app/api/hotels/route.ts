@@ -112,7 +112,7 @@ export async function GET(request: NextRequest) {
       'h.address',
     ]);
 
-    // 9. Build main query
+    // 9. Build main query (use subquery to get only most recent pricing per hotel)
     const baseQuery = `
       SELECT
         h.*,
@@ -134,6 +134,15 @@ export async function GET(request: NextRequest) {
       LEFT JOIN hotel_pricing hp ON h.id = hp.hotel_id
         AND hp.status = 'active'
         AND CURDATE() BETWEEN hp.start_date AND hp.end_date
+        AND hp.id = (
+          SELECT hp2.id
+          FROM hotel_pricing hp2
+          WHERE hp2.hotel_id = h.id
+            AND hp2.status = 'active'
+            AND CURDATE() BETWEEN hp2.start_date AND hp2.end_date
+          ORDER BY hp2.effective_from DESC, hp2.id DESC
+          LIMIT 1
+        )
     `;
 
     const { sql, params } = buildQuery(baseQuery, {

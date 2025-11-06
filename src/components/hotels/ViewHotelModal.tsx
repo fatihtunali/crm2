@@ -259,12 +259,12 @@ export default function ViewHotelModal({ isOpen, onClose, onEdit, onManagePricin
                 <div className="grid grid-cols-2 gap-4">
                   {/* Room Pricing */}
                   <div>
-                    <h4 className="font-medium text-gray-700 mb-2">Room Pricing ({hotel.currency})</h4>
+                    <h4 className="font-medium text-gray-700 mb-2">Room Pricing - Per Person ({hotel.currency})</h4>
                     <table className="w-full text-sm">
                       <tbody>
-                        {hotel.double_room_bb && <tr><td className="py-1">Double Room (BB):</td><td className="font-semibold">{hotel.currency} {parseFloat(hotel.double_room_bb.toString()).toFixed(2)}</td></tr>}
+                        {hotel.double_room_bb && <tr><td className="py-1">Per Person in Double Room (BB):</td><td className="font-semibold">{hotel.currency} {parseFloat(hotel.double_room_bb.toString()).toFixed(2)}</td></tr>}
                         {hotel.single_supplement_bb && <tr><td className="py-1">Single Supplement:</td><td className="font-semibold">{hotel.currency} {parseFloat(hotel.single_supplement_bb.toString()).toFixed(2)}</td></tr>}
-                        {hotel.triple_room_bb && <tr><td className="py-1">Triple Room (BB):</td><td className="font-semibold">{hotel.currency} {parseFloat(hotel.triple_room_bb.toString()).toFixed(2)}</td></tr>}
+                        {hotel.triple_room_bb && <tr><td className="py-1">Per Person in Triple Room (BB):</td><td className="font-semibold">{hotel.currency} {parseFloat(hotel.triple_room_bb.toString()).toFixed(2)}</td></tr>}
                       </tbody>
                     </table>
                   </div>
@@ -274,8 +274,8 @@ export default function ViewHotelModal({ isOpen, onClose, onEdit, onManagePricin
                     <h4 className="font-medium text-gray-700 mb-2">Child & Meal Supplements ({hotel.currency})</h4>
                     <table className="w-full text-sm">
                       <tbody>
-                        {hotel.child_0_6_bb && <tr><td className="py-1">Child 0-6:</td><td className="font-semibold">{hotel.currency} {parseFloat(hotel.child_0_6_bb.toString()).toFixed(2)}</td></tr>}
-                        {hotel.child_6_12_bb && <tr><td className="py-1">Child 6-12:</td><td className="font-semibold">{hotel.currency} {parseFloat(hotel.child_6_12_bb.toString()).toFixed(2)}</td></tr>}
+                        {hotel.child_0_6_bb && <tr><td className="py-1">Child 0-6 - Per Child:</td><td className="font-semibold">{hotel.currency} {parseFloat(hotel.child_0_6_bb.toString()).toFixed(2)}</td></tr>}
+                        {hotel.child_6_12_bb && <tr><td className="py-1">Child 6-12 - Per Child:</td><td className="font-semibold">{hotel.currency} {parseFloat(hotel.child_6_12_bb.toString()).toFixed(2)}</td></tr>}
                         {hotel.hb_supplement && <tr><td className="py-1">HB Supplement:</td><td className="font-semibold">{hotel.currency} {parseFloat(hotel.hb_supplement.toString()).toFixed(2)}</td></tr>}
                         {hotel.fb_supplement && <tr><td className="py-1">FB Supplement:</td><td className="font-semibold">{hotel.currency} {parseFloat(hotel.fb_supplement.toString()).toFixed(2)}</td></tr>}
                         {hotel.ai_supplement && <tr><td className="py-1">AI Supplement:</td><td className="font-semibold">{hotel.currency} {parseFloat(hotel.ai_supplement.toString()).toFixed(2)}</td></tr>}

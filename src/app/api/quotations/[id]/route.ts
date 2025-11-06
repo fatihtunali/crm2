@@ -87,12 +87,17 @@ export async function GET(
         d.date as day_date,
         d.created_at as day_created_at,
         e.id as expense_id,
-        e.expense_type,
+        e.category,
+        e.hotel_category,
+        e.location,
         e.description,
-        e.quantity,
-        e.unit_price,
-        e.total_price,
-        e.notes
+        e.price,
+        e.single_supplement,
+        e.child_0to2,
+        e.child_3to5,
+        e.child_6to11,
+        e.vehicle_count,
+        e.price_per_vehicle
       FROM quote_days d
       LEFT JOIN quote_expenses e ON d.id = e.quote_day_id
       WHERE d.quote_id = ?
@@ -118,12 +123,17 @@ export async function GET(
       if (row.expense_id) {
         daysMap.get(row.day_id).expenses.push({
           id: row.expense_id,
-          expense_type: row.expense_type,
+          category: row.category,
+          hotel_category: row.hotel_category,
+          location: row.location,
           description: row.description,
-          quantity: row.quantity,
-          unit_price: row.unit_price,
-          total_price: row.total_price,
-          notes: row.notes
+          price: row.price,
+          single_supplement: row.single_supplement,
+          child_0to2: row.child_0to2,
+          child_3to5: row.child_3to5,
+          child_6to11: row.child_6to11,
+          vehicle_count: row.vehicle_count,
+          price_per_vehicle: row.price_per_vehicle
         });
       }
     }

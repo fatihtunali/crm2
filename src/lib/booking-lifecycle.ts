@@ -103,7 +103,7 @@ export async function createBookingFromQuotation(
       // Insert booking record
       const [insertResult] = await conn.query(
         `INSERT INTO bookings (
-          quotation_id,
+          quote_id,
           booking_number,
           locked_exchange_rate,
           currency,

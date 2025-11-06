@@ -378,7 +378,8 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    await query('UPDATE quote_expenses SET archived_at = NOW(), updated_at = NOW() WHERE id = ?', [id]);
+    // Hard delete for now - archived_at column doesn't exist yet
+    await query('DELETE FROM quote_expenses WHERE id = ?', [id]);
 
     // AUDIT: Log expense deletion
     await auditLog(

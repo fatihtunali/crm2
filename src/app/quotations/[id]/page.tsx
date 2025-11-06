@@ -150,10 +150,36 @@ export default function QuotationBuilderPage() {
     setQuotation({ ...quotation, days: updatedDays });
   }
 
-  function removeExpense(dayIndex: number, expenseIndex: number) {
+  async function removeExpense(dayIndex: number, expenseIndex: number) {
     if (!quotation) return;
 
     const updatedDays = [...quotation.days];
+    const expense = updatedDays[dayIndex].expenses[expenseIndex];
+
+    // If expense has an ID, delete from database
+    if (expense.id) {
+      try {
+        const res = await fetch(`/api/quotations/${params.id}/expenses`, {
+          method: 'DELETE',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-Tenant-Id': organizationId
+          },
+          body: JSON.stringify({ id: expense.id })
+        });
+
+        if (!res.ok) {
+          alert('Failed to delete expense');
+          return;
+        }
+      } catch (error) {
+        console.error('Failed to delete expense:', error);
+        alert('Failed to delete expense');
+        return;
+      }
+    }
+
+    // Remove from state
     updatedDays[dayIndex].expenses.splice(expenseIndex, 1);
     setQuotation({ ...quotation, days: updatedDays });
   }
@@ -410,7 +436,7 @@ export default function QuotationBuilderPage() {
                       <span className="text-gray-400 text-sm">€</span>
                       <input
                         type="number"
-                        value={expense.price}
+                        value={expense.price ?? 0}
                         onChange={(e) => updateExpense(dayIndex, expenseIndex, 'price', parseFloat(e.target.value) || 0)}
                         className="w-20 px-2 py-1 text-sm text-right font-medium border-0 border-b border-transparent hover:border-gray-300 focus:border-primary-500 focus:ring-0 bg-transparent"
                         step="0.01"

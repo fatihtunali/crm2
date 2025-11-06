@@ -68,7 +68,10 @@ export async function GET(request: Request) {
     const typeFilter = searchParams.get('type') as SupplierType | null;
     const location = searchParams.get('location') || '';
     const searchTerm = searchParams.get('search') || '';
-    const date = searchParams.get('date');
+    const dateParam = searchParams.get('date');
+
+    // Extract just the date part (YYYY-MM-DD) from ISO timestamp for DATE column comparison
+    const date = dateParam ? dateParam.split('T')[0] : null;
 
     // Validate type filter if provided
     const validTypes: SupplierType[] = [
@@ -88,9 +91,6 @@ export async function GET(request: Request) {
     const queries: string[] = [];
     const params: any[] = [];
 
-    // Helper to add tenant filtering
-    const addTenantFilter = (tableName: string) => `${tableName}.tenant_id = ?`;
-
     // Hotel search
     if (!typeFilter || typeFilter === 'hotel') {
       let hotelQuery = `
@@ -105,15 +105,21 @@ export async function GET(request: Request) {
           hp.double_room_bb as price,
           hp.single_supplement_bb as single_supplement,
           hp.child_0_6_bb as child_0to2,
-          hp.child_6_12_bb as child_6to11
+          hp.child_6_12_bb as child_6to11,
+          hp.start_date,
+          hp.end_date,
+          hp.id as pricing_id
         FROM hotels h
         LEFT JOIN hotel_pricing hp ON h.id = hp.hotel_id
           AND hp.status = 'active'
           ${date ? 'AND ? BETWEEN hp.start_date AND hp.end_date' : ''}
-        WHERE h.status = 'active' AND ${addTenantFilter('h')}
+        WHERE h.status = 'active' AND h.organization_id = ?
       `;
-      if (date) params.push(date);
-      params.push(tenantId);
+      if (date) {
+        console.log('[HOTEL PRICING] Searching for date:', date);
+        params.push(date);
+      }
+      params.push(parseInt(tenantId));
 
       if (location) {
         hotelQuery += ' AND h.city LIKE ?';
@@ -143,10 +149,10 @@ export async function GET(request: Request) {
         LEFT JOIN guide_pricing gp ON g.id = gp.guide_id
           AND gp.status = 'active'
           ${date ? 'AND ? BETWEEN gp.start_date AND gp.end_date' : ''}
-        WHERE g.status = 'active' AND ${addTenantFilter('g')}
+        WHERE g.status = 'active' AND g.organization_id = ?
       `;
       if (date) params.push(date);
-      params.push(tenantId);
+      params.push(parseInt(tenantId));
 
       if (location) {
         guideQuery += ' AND g.city LIKE ?';
@@ -174,9 +180,9 @@ export async function GET(request: Request) {
           v.max_capacity
         FROM intercity_transfers t
         LEFT JOIN vehicles v ON t.vehicle_id = v.id
-        WHERE t.status = 'active' AND ${addTenantFilter('t')}
+        WHERE t.status = 'active' AND t.organization_id = ?
       `;
-      params.push(tenantId);
+      params.push(parseInt(tenantId));
 
       if (location) {
         transferQuery += ' AND (t.from_city LIKE ? OR t.to_city LIKE ?)';
@@ -205,9 +211,9 @@ export async function GET(request: Request) {
           adult_dinner_price,
           child_dinner_price
         FROM meal_pricing
-        WHERE status = 'active' AND ${addTenantFilter('meal_pricing')}
+        WHERE status = 'active' AND organization_id = ?
       `;
-      params.push(tenantId);
+      params.push(parseInt(tenantId));
 
       if (location) {
         restaurantQuery += ' AND city LIKE ?';
@@ -236,10 +242,10 @@ export async function GET(request: Request) {
         LEFT JOIN entrance_fee_pricing ep ON e.id = ep.entrance_fee_id
           AND ep.status = 'active'
           ${date ? 'AND ? BETWEEN ep.start_date AND ep.end_date' : ''}
-        WHERE e.status = 'active' AND ${addTenantFilter('e')}
+        WHERE e.status = 'active' AND e.organization_id = ?
       `;
       if (date) params.push(date);
-      params.push(tenantId);
+      params.push(parseInt(tenantId));
 
       if (location) {
         feeQuery += ' AND e.city LIKE ?';
@@ -266,9 +272,9 @@ export async function GET(request: Request) {
           unit_price as price,
           unit_type
         FROM extra_expenses
-        WHERE status = 'active' AND ${addTenantFilter('extra_expenses')}
+        WHERE status = 'active' AND organization_id = ?
       `;
-      params.push(tenantId);
+      params.push(parseInt(tenantId));
 
       if (location) {
         expenseQuery += ' AND city LIKE ?';
@@ -298,10 +304,10 @@ export async function GET(request: Request) {
         LEFT JOIN tour_pricing tp ON t.id = tp.tour_id
           AND tp.status = 'active'
           ${date ? 'AND ? BETWEEN tp.start_date AND tp.end_date' : ''}
-        WHERE t.status = 'active' AND ${addTenantFilter('t')}
+        WHERE t.status = 'active' AND t.organization_id = ?
       `;
       if (date) params.push(date);
-      params.push(tenantId);
+      params.push(parseInt(tenantId));
 
       if (location) {
         tourQuery += ' AND t.city LIKE ?';
@@ -331,6 +337,9 @@ export async function GET(request: Request) {
     const countQuery = `SELECT COUNT(*) as total FROM (${unionQuery}) as suppliers`;
     const countParams = params.slice(0, -2); // Remove LIMIT and OFFSET
 
+    console.log('[SUPPLIER SEARCH] Query params:', params);
+    console.log('[SUPPLIER SEARCH] Final query:', finalQuery.substring(0, 500));
+
     // Execute queries in parallel
     const [results, countResult] = await Promise.all([
       query(finalQuery, params),
@@ -338,6 +347,24 @@ export async function GET(request: Request) {
     ]);
 
     const total = (countResult as any)[0].total;
+
+    console.log('[SUPPLIER SEARCH] Results count:', (results as any[]).length);
+    console.log('[SUPPLIER SEARCH] Total:', total);
+
+    // Debug: Log first result to check pricing data
+    if (results && (results as any[]).length > 0) {
+      console.log('[SUPPLIER SEARCH] First result:', JSON.stringify((results as any[])[0], null, 2));
+      // If searching for specific hotel, log all matches
+      if (searchTerm && searchTerm.toLowerCase().includes('arg')) {
+        console.log('[SUPPLIER SEARCH] All Argos matches:', JSON.stringify(
+          (results as any[]).filter((r: any) => r.name && r.name.toLowerCase().includes('arg')),
+          null,
+          2
+        ));
+      }
+    } else {
+      console.log('[SUPPLIER SEARCH] No results returned!');
+    }
 
     // Build paged response
     const baseUrl = new URL(request.url).origin + new URL(request.url).pathname;

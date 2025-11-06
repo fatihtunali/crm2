@@ -188,15 +188,21 @@ export default function ManagePricingModal({ isOpen, onClose, hotelId, hotelName
     if (!confirm('Are you sure you want to delete this pricing record?')) return;
 
     try {
-      await fetch('/api/hotel-pricing', {
+      const res = await fetch('/api/hotel-pricing', {
         method: 'DELETE',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ id })
       });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.error || 'Failed to delete pricing');
+      }
+
       fetchPricing();
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to delete pricing:', error);
-      alert('Failed to delete pricing');
+      alert(error.message || 'Failed to delete pricing');
     }
   }
 
@@ -284,10 +290,10 @@ export default function ManagePricingModal({ isOpen, onClose, hotelId, hotelName
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-4">
                 {/* Room Pricing */}
                 <div>
-                  <h4 className="font-medium text-gray-700 mb-2">Room Pricing (per night)</h4>
+                  <h4 className="font-medium text-gray-700 mb-2">Room Pricing (per person per night)</h4>
                   <div className="space-y-2">
                     <div>
-                      <label className="block text-sm text-gray-600 mb-1">Double Room (BB):</label>
+                      <label className="block text-sm text-gray-600 mb-1">Per Person in Double Room (BB):</label>
                       <input
                         type="number"
                         step="0.01"
@@ -309,7 +315,7 @@ export default function ManagePricingModal({ isOpen, onClose, hotelId, hotelName
                       />
                     </div>
                     <div>
-                      <label className="block text-sm text-gray-600 mb-1">Triple Room (BB):</label>
+                      <label className="block text-sm text-gray-600 mb-1">Per Person in Triple Room (BB):</label>
                       <input
                         type="number"
                         step="0.01"
@@ -327,7 +333,7 @@ export default function ManagePricingModal({ isOpen, onClose, hotelId, hotelName
                   <h4 className="font-medium text-gray-700 mb-2">Child Pricing & Meal Supplements</h4>
                   <div className="space-y-2">
                     <div>
-                      <label className="block text-sm text-gray-600 mb-1">Child 0-6 (BB):</label>
+                      <label className="block text-sm text-gray-600 mb-1">Child 0-6 - Per Child (BB):</label>
                       <input
                         type="number"
                         step="0.01"
@@ -338,7 +344,7 @@ export default function ManagePricingModal({ isOpen, onClose, hotelId, hotelName
                       />
                     </div>
                     <div>
-                      <label className="block text-sm text-gray-600 mb-1">Child 6-12 (BB):</label>
+                      <label className="block text-sm text-gray-600 mb-1">Child 6-12 - Per Child (BB):</label>
                       <input
                         type="number"
                         step="0.01"
@@ -471,11 +477,11 @@ export default function ManagePricingModal({ isOpen, onClose, hotelId, hotelName
                   <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                     {/* Room Prices */}
                     <div>
-                      <p className="font-medium text-gray-700 mb-1">Room Pricing ({record.currency})</p>
+                      <p className="font-medium text-gray-700 mb-1">Room Pricing - Per Person ({record.currency})</p>
                       <div className="space-y-1 text-gray-600">
-                        {record.double_room_bb && <p>Double Room (BB): {record.currency} {parseFloat(record.double_room_bb.toString()).toFixed(2)}</p>}
+                        {record.double_room_bb && <p>Per Person in Double Room (BB): {record.currency} {parseFloat(record.double_room_bb.toString()).toFixed(2)}</p>}
                         {record.single_supplement_bb && <p>Single Supplement: {record.currency} {parseFloat(record.single_supplement_bb.toString()).toFixed(2)}</p>}
-                        {record.triple_room_bb && <p>Triple Room (BB): {record.currency} {parseFloat(record.triple_room_bb.toString()).toFixed(2)}</p>}
+                        {record.triple_room_bb && <p>Per Person in Triple Room (BB): {record.currency} {parseFloat(record.triple_room_bb.toString()).toFixed(2)}</p>}
                       </div>
                     </div>
 
@@ -483,8 +489,8 @@ export default function ManagePricingModal({ isOpen, onClose, hotelId, hotelName
                     <div>
                       <p className="font-medium text-gray-700 mb-1">Child & Meal Supplements ({record.currency})</p>
                       <div className="space-y-1 text-gray-600">
-                        {record.child_0_6_bb && <p>Child 0-6 (BB): {record.currency} {parseFloat(record.child_0_6_bb.toString()).toFixed(2)}</p>}
-                        {record.child_6_12_bb && <p>Child 6-12 (BB): {record.currency} {parseFloat(record.child_6_12_bb.toString()).toFixed(2)}</p>}
+                        {record.child_0_6_bb && <p>Child 0-6 - Per Child (BB): {record.currency} {parseFloat(record.child_0_6_bb.toString()).toFixed(2)}</p>}
+                        {record.child_6_12_bb && <p>Child 6-12 - Per Child (BB): {record.currency} {parseFloat(record.child_6_12_bb.toString()).toFixed(2)}</p>}
                         {record.hb_supplement && <p>HB Supplement: {record.currency} {parseFloat(record.hb_supplement.toString()).toFixed(2)}</p>}
                         {record.fb_supplement && <p>FB Supplement: {record.currency} {parseFloat(record.fb_supplement.toString()).toFixed(2)}</p>}
                         {record.ai_supplement && <p>AI Supplement: {record.currency} {parseFloat(record.ai_supplement.toString()).toFixed(2)}</p>}

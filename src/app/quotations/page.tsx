@@ -28,6 +28,7 @@ export default function QuotationsPage() {
   const [quotations, setQuotations] = useState<Quotation[]>([]);
   const [loading, setLoading] = useState(true);
   const [statusFilter, setStatusFilter] = useState('all');
+  const [converting, setConverting] = useState<number | null>(null);
 
   useEffect(() => {
     fetchQuotations();
@@ -54,6 +55,43 @@ export default function QuotationsPage() {
       setQuotations([]);
     } finally {
       setLoading(false);
+    }
+  }
+
+  async function acceptQuotation(quotationId: number) {
+    if (!confirm('Accept this quotation? This will automatically create a booking.')) {
+      return;
+    }
+
+    setConverting(quotationId);
+    try {
+      const res = await fetch(`/api/quotations/${quotationId}/status`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Tenant-Id': organizationId
+        },
+        body: JSON.stringify({ status: 'accepted' })
+      });
+
+      if (!res.ok) {
+        const error = await res.json();
+        throw new Error(error.message || 'Failed to accept quotation');
+      }
+
+      const result = await res.json();
+      alert(`Successfully accepted quotation and created booking!\nBooking ID: ${result.booking.id}`);
+
+      // Refresh quotations list
+      fetchQuotations();
+
+      // Redirect to bookings page
+      window.location.href = '/bookings';
+    } catch (error: any) {
+      console.error('Failed to accept quotation:', error);
+      alert(`Failed to accept quotation: ${error.message}`);
+    } finally {
+      setConverting(null);
     }
   }
 
@@ -175,6 +213,15 @@ export default function QuotationsPage() {
                       >
                         Edit
                       </Link>
+                      {(quote.status === 'draft' || quote.status === 'sent') && (
+                        <button
+                          onClick={() => acceptQuotation(quote.id)}
+                          disabled={converting === quote.id}
+                          className="text-green-600 hover:text-green-700 font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {converting === quote.id ? 'Accepting...' : 'Accept'}
+                        </button>
+                      )}
                     </div>
                   </td>
                 </tr>
